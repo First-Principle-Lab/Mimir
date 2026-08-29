@@ -14,7 +14,20 @@ export interface TriageVerdict {
   error?: boolean;
 }
 
-const TRIAGE_SYSTEM = loadPrompt("filter_email.md");
+// Per-provider monitor system prompts. email is the original default (the
+// async filter and gmail monitor); the calendar/github monitors carry their own
+// instruction set — the same strict default-to-false verdict shape, sourced from
+// a prompt file rather than duplicated classification logic.
+const TRIAGE_SYSTEMS: Record<string, string> = {
+  email: loadPrompt("filter_email.md"),
+  github: loadPrompt("github_monitor.md"),
+  googlecalendar: loadPrompt("calendar_monitor.md"),
+};
+
+export function promptForKind(kind?: string): string {
+  const key = kind ?? "email";
+  return TRIAGE_SYSTEMS[key] ?? TRIAGE_SYSTEMS.email!;
+}
 
 // Shared parser for the prompt-shaped {surface, rationale, category} verdicts
 // used by BOTH the async filter and triage. Safe default: a missing/incorrect
@@ -47,9 +60,9 @@ export function parseTriage(raw: string): Omit<TriageVerdict, "error"> {
   return { surface, rationale, category };
 }
 
-export async function triageVerdict(userId: string, content: string): Promise<TriageVerdict> {
+export async function triageVerdict(userId: string, content: string, kind?: string): Promise<TriageVerdict> {
   const messages: LlmMessage[] = [
-    { role: "system", content: TRIAGE_SYSTEM },
+    { role: "system", content: promptForKind(kind) },
     { role: "user", content },
   ];
   let result;

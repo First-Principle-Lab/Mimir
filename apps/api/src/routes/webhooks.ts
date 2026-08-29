@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { getConfig, getLogger, getPrismaClient, type InputJsonValue } from "@mimir/backend-core";
+import { GOOGLE_CALENDAR_INTEGRATION } from "@mimir/connection-provider";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 import { Router } from "express";
 
@@ -147,6 +148,44 @@ export function webhooksRouter(opts: {
     const body = req.body as { delivery?: string; action?: string };
     const externalId = body.delivery ?? `github:${createHmac("sha256", "github").update(rawBody).digest("hex")}`;
     res.status(200).json(await storeWebhook("github", externalId, req.body));
+  });
+
+  router.post("/calendar", async (req, res) => {
+    // Google Calendar push has no signature (unlike Gmail's Pub/Sub JWT), so
+    // authenticity comes from the channel token WE set at watch() registration:
+    // it must match webhookMeta.token on a connected googlecalendar connection
+    // whose channelId matches X-Goog-Channel-ID. Verified BEFORE any DB write.
+    const channelId = req.headers["x-goog-channel-id"] as string | undefined;
+    const messageNumber = req.headers["x-goog-message-number"] as string | undefined;
+    const token = req.headers["x-goog-channel-token"] as string | undefined;
+    const resourceState = req.headers["x-goog-resource-state"] as string | undefined;
+    if (!channelId || !messageNumber || !token) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "missing Google Calendar push headers" } });
+      return;
+    }
+    // Channel-creation "sync" is Google confirming the watch — nothing to relay.
+    if (resourceState === "sync") {
+      res.status(200).json({ stored: false });
+      return;
+    }
+    const channel = await prisma.integrationConnection.findFirst({
+      where: {
+        provider: GOOGLE_CALENDAR_INTEGRATION,
+        status: "connected",
+        webhookMeta: { path: ["channelId"], equals: channelId },
+      },
+      select: { webhookMeta: true },
+    });
+    const meta = (channel?.webhookMeta ?? {}) as { token?: string };
+    if (!channel || !meta.token || !safeEqual(meta.token, token)) {
+      res.status(401).json({ error: { code: "UNAUTHORIZED", message: "invalid Google Calendar channel" } });
+      return;
+    }
+    // externalId namespaces by channel + Google's per-channel monotonic message
+    // number, so a re-delivered push (Google retry) is an atomic no-op via the
+    // (provider, externalId) unique constraint — the replay guard.
+    const externalId = `${channelId}:${messageNumber}`;
+    res.status(200).json(await storeWebhook("googlecalendar", externalId, req.body));
   });
 
   router.post("/slack", async (req, res) => {

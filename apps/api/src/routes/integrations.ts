@@ -14,7 +14,7 @@ import {
   gmailProvider,
   providerFor,
 } from "@mimir/connection-provider";
-import type { ConnectionProvider } from "@mimir/connection-provider";
+import type { ApiRequestOptions, ApiRequestResult, ConnectionProvider } from "@mimir/connection-provider";
 import { Router } from "express";
 import { requireAuth } from "../auth/auth.js";
 
@@ -269,6 +269,16 @@ integrationsRouter.get("/integrations/:providerKey/callback", requireAuth, async
   try {
     await providerForKey(key).handleCallback(userId, connectedAccountId);
     getLogger().info({ userId, provider: key }, "integration connection stored");
+    // GitHub webhook coverage should start within seconds, not at the next
+    // daily self-heal sweep. Enqueue a one-off registration via the outbox
+    // (worker owns the GitHub API call; this route only writes a durable row —
+    // the same shape as every other api->worker handoff in this codebase).
+    if (key === GITHUB_INTEGRATION) {
+      await prisma.outboxEvent.create({
+        data: { eventType: "github_hook_register", payload: { userId } },
+      });
+      getLogger().info({ userId }, "github hook registration enqueued");
+    }
   } catch (e) {
     getLogger().error({ err: e, userId, provider: key }, "integration callback failed");
   }
@@ -288,6 +298,19 @@ integrationsRouter.post("/integrations/:providerKey/disconnect", requireAuth, as
   if (!ROSTER.some((r) => r.key === key)) {
     res.status(404).json({ error: { code: "NOT_FOUND", message: "unknown integration" } });
     return;
+  }
+  // GitHub: delete the repo webhooks we registered before dropping the row,
+  // so a disconnect stops GitHub push deliveries, not just our local state.
+  if (key === GITHUB_INTEGRATION) {
+    const conn = await prisma.integrationConnection.findFirst({
+      where: { userId, provider: GITHUB_INTEGRATION },
+    });
+    const hooks = ((conn?.webhookMeta ?? {}) as { hooks?: { repo: string; id: number; url: string }[] }).hooks ?? [];
+    const request: (path: string, opts?: ApiRequestOptions) => Promise<ApiRequestResult> = (path, opts) =>
+      providerForKey(key).apiRequest(userId, path, opts);
+    for (const hook of hooks) {
+      await request(`/repos/${hook.repo}/hooks/${hook.id}`, { method: "DELETE" }).catch(() => {});
+    }
   }
   await providerForKey(key).revoke(userId);
   getLogger().info({ userId, provider: key }, "integration revoked");

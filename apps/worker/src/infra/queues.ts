@@ -8,10 +8,12 @@ import {
 import { runDormancySweep } from "../agent/dormancy.js";
 import { sendEmailJob } from "../email/email-send-job.js";
 import { pollGithubActivity } from "../integrations/github/github-poll.js";
+import { githubRequestFor, registerGithubWebhooksForUser, runGithubHookSweep } from "../integrations/github/github-webhooks.js";
 import { pollImportantMail } from "./mail-poll.js";
 import { runTriggerSweep, TRIGGER_TICK_CRON } from "../agent/triggers.js";
 import { runWatchRenewal } from "../integrations/gmail/watch-renewal.js";
 import { runConnectionCanary } from "../integrations/connection-canary.js";
+import { pollCalendarActivity } from "../integrations/calendar/calendar-poll.js";
 
 export const AGENT_JOBS = "agent-jobs";
 export const AGENT_ONCE = "agent-once";
@@ -89,6 +91,29 @@ export async function scheduleGithubPollSweep(): Promise<void> {
   );
 }
 
+// Calendar changed-event sweep (CALENDAR_POLL_CRON, default 1-minute like the
+// mail poll — the cheap per-connection safety net under the calendar webhook,
+// exactly the gmail webhook + mail-poll pairing).
+export async function scheduleCalendarPollSweep(): Promise<void> {
+  await agentTriggers.upsertJobScheduler(
+    "calendar-poll-sweep",
+    { pattern: cfg.CALENDAR_POLL_CRON, immediately: false },
+    { name: "calendar-poll-sweep", data: { calendarPoll: true } },
+  );
+}
+
+// Daily github repo-webhook self-heal sweep — re-registers hooks for any
+// connected github account whose connect-time registration was missed (api
+// restart around the outbox drain). The scheduled job never blocks a fresh
+// connection: connect-time enqueues a one-off github-hook-register job too.
+export async function scheduleGithubHookSweep(): Promise<void> {
+  await agentTriggers.upsertJobScheduler(
+    "github-hook-sweep",
+    { pattern: "0 1 * * *", immediately: false },
+    { name: "github-hook-sweep", data: { githubHooks: true } },
+  );
+}
+
 // 1-min trigger tick: reuses the agent-triggers queue like the other
 // cheap, low-frequency sweeps — no dedicated queue.
 export async function scheduleTriggerTick(): Promise<void> {
@@ -138,6 +163,20 @@ export async function agentTriggerProcessor(job: Job): Promise<void> {
       return;
     case "github-poll-sweep":
       await pollGithubActivity();
+      return;
+    case "calendar-poll-sweep":
+      await pollCalendarActivity();
+      return;
+    case "github-hook-sweep":
+      await runGithubHookSweep();
+      return;
+    case "github-hook-register":
+      // One-off from the connect-time outbox row: register hooks for exactly
+      // this user right now, not at the next daily sweep.
+      {
+        const { userId } = (job.data ?? {}) as { userId?: string };
+        if (userId) await registerGithubWebhooksForUser(githubRequestFor, userId);
+      }
       return;
     case "trigger-tick":
       await runTriggerSweep();

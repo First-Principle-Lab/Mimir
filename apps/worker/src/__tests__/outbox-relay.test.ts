@@ -46,14 +46,22 @@ afterAll(async () => {
       agentJobs.getJob(id),
       emailJobs.getJob(id),
     ]);
-    await agentJob?.remove();
-    await emailJob?.remove();
+    await agentJob?.remove().catch(() => {});
+    await emailJob?.remove().catch(() => {});
   }
+  await prisma.trigger.deleteMany({ where: { agentId } });
+  await prisma.plan.deleteMany({ where: { agentId } });
+  await prisma.reflectionEvent.deleteMany({ where: { agentId } });
+  await prisma.agentEvent.deleteMany({ where: { agentId } });
   await prisma.agent.deleteMany({ where: { id: agentId } });
   await prisma.outboxEvent.deleteMany({
     where: { payload: { path: ["agentId"], equals: agentId } },
   });
   await prisma.outboxEvent.deleteMany({ where: { eventType: "email_send" } });
+  // The dev worker may have executed an enqueued job against this conversation
+  // (an agent run writes a surfaced message into it) — clear dependents first.
+  await prisma.message.deleteMany({ where: { conversationId: convId } });
+  await prisma.conversationSummary.deleteMany({ where: { conversationId: convId } });
   await prisma.conversation.deleteMany({ where: { id: convId } });
   await prisma.user.delete({ where: { id: userId } });
   await agentJobs.close();
@@ -198,6 +206,34 @@ describe("outbox relay", () => {
     expect(job?.data).toMatchObject(payload);
     await job?.remove();
     await onceJobs.close();
+  });
+
+  test("a github_hook_register row enqueues an agent-triggers job keyed by ROW (fresh per connect, retry policy applied)", async () => {
+    // Throwaway queue: the shared agent-triggers queue is owned by the live
+    // worker in this process (queues.test.ts) and would sweep the job away.
+    const triggerQ = new Queue(`trigger-${Date.now()}`, {
+      connection: { url: process.env.REDIS_URL, maxRetriesPerRequest: null },
+    });
+    const row = await prisma.outboxEvent.create({
+      data: { eventType: "github_hook_register", payload: { userId } },
+    });
+
+    const enqueued = await drainOutbox(agentJobs, emailJobs, undefined, undefined, triggerQ);
+
+    expect(enqueued).toBe(1);
+    await poll(
+      () => prisma.outboxEvent.findUnique({ where: { id: row.id } }),
+      (r) => r?.processedAt != null,
+    );
+    // Keyed by the outbox row id, not the user, so a re-connect after a
+    // disconnect (hooks removed) is a NEW job that actually runs — a
+    // userId-keyed job would be swallowed by the retained prior id.
+    const job = await triggerQ.getJob(`gh-hook-${row.id}`);
+    expect(job?.data).toMatchObject({ userId });
+    expect(job?.opts.attempts).toBeGreaterThan(1); // retryPolicy spread
+    await job?.remove();
+    await prisma.outboxEvent.deleteMany({ where: { id: row.id } });
+    await triggerQ.close();
   });
 
   test("extract_facts coalescing: SAME window -> ONE job; a LATER window still gets a fresh job (no permanent jobId block)", async () => {

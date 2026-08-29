@@ -1,8 +1,10 @@
 import { getConfig, getLogger, version } from "@mimir/backend-core";
 import {
+  scheduleCalendarPollSweep,
   scheduleConnectionCanary,
   scheduleDormancySweep,
   scheduleFactExtractionSweep,
+  scheduleGithubHookSweep,
   scheduleGithubPollSweep,
   scheduleMailPollSweep,
   scheduleTriggerTick,
@@ -24,6 +26,12 @@ void scheduleMailPollSweep().catch((e) =>
 );
 void scheduleGithubPollSweep().catch((e) =>
   getLogger().error({ err: e }, "failed to schedule github poll sweep"),
+);
+void scheduleCalendarPollSweep().catch((e) =>
+  getLogger().error({ err: e }, "failed to schedule calendar poll sweep"),
+);
+void scheduleGithubHookSweep().catch((e) =>
+  getLogger().error({ err: e }, "failed to schedule github hook sweep"),
 );
 void scheduleTriggerTick().catch((e) =>
   getLogger().error({ err: e }, "failed to schedule trigger tick"),

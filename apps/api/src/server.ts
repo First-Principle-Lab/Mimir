@@ -42,17 +42,11 @@ app.use((req, res, next) => {
   runWithContext({ requestId }, () => context.with(trace.setSpan(context.active(), span), next));
 });
 
-// Webhook HMACs (GitHub/Slack) need the pre-parsed raw body. Capture it on the
-// webhook path BEFORE the global JSON parser (both listen on the same stream);
-// express.json() still populates req.body for the handlers.
-app.use("/webhooks", (req, res, next) => {
-  const chunks: Buffer[] = [];
-  req.on("data", (c) => chunks.push(c));
-  req.on("end", () => {
-    (req as { rawBody?: string }).rawBody = Buffer.concat(chunks).toString("utf8");
-    next();
-  });
-});
+// Webhook HMACs (GitHub/Slack) need the pre-parsed raw body. `express.json`'s
+// verify hook captures the raw bytes WITHOUT consuming the stream, so req.body
+// is still parsed for the handlers — the manual data-listener approach would
+// drain the stream and leave req.body undefined on every /webhooks POST.
+app.use("/webhooks", express.json({ verify: (req, _res, buf) => { (req as { rawBody?: string }).rawBody = buf.toString("utf8"); } }));
 app.use(express.json());
 
 // CORS for the static-export web app (different origin/port). Reflect only

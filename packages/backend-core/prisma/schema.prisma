@@ -332,6 +332,13 @@ model IntegrationConnection {
   // connected_account id. Provider-agnostic — either provider stores its id here.
   connectionId String @unique
   status       String
+  // Provider-specific inbound-webhook state. Kept as one JSON blob on the
+  // existing row (no parallel table) — the schema differs per provider:
+  //   googlecalendar: { token, channelId, expiration } — the watch channel set
+  //     on connect/renewal; the token gates /webhooks/calendar writes.
+  //   github: { hooks: [{ repo, id, url }] } — the registered repo webhooks,
+  //     removed on disconnect.
+  webhookMeta Json?
   createdAt    DateTime @default(now())
 
   @@index([userId, provider])

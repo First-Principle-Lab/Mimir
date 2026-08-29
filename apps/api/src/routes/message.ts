@@ -31,6 +31,21 @@ import {
   resolvePendingAction,
 } from "../email/email-action.js";
 import { writeAck } from "../agent/ack.js";
+import {
+  CALENDAR_ACTION_TYPE,
+  CALENDAR_SUMMARY_MAX,
+  calendarActionHint,
+  cancelPendingCalendarActions,
+  createCalendarEvent,
+  findPendingCalendarAction,
+  isCalendarEventActionable,
+  isCalendarConnected,
+  markCalendarAction,
+  markCalendarExpired,
+  proposeCalendarAction,
+  renderCalendarEvent,
+  resolvePendingCalendarAction,
+} from "../calendar/calendar-action.js";
 import { createHash } from "node:crypto";
 import {
   classifyMessage,
@@ -417,6 +432,127 @@ messageRouter.post("/message", requireAuth, async (req, res) => {
     return;
   }
 
+  // A pending calendar proposal forces resolution before any new work — the
+  // proposed event sits in the thread awaiting confirm or cancel; confirm writes
+  // it to Google Calendar. Mirror of the email draft gate above.
+  const pendingCalendarAction = await findPendingCalendarAction(conversationId);
+  if (pendingCalendarAction) {
+    const resolved = await resolvePendingCalendarAction(
+      userId,
+      content,
+      pendingCalendarAction.event,
+    );
+    let replyContent: string;
+    if (resolved.intent === "confirm") {
+      try {
+        const created = await createCalendarEvent(userId, pendingCalendarAction.event);
+        await markCalendarAction(pendingCalendarAction.messageId, "executed", {
+          eventId: created.id,
+          confirmedAt: new Date().toISOString(),
+        });
+        await trackEvent(userId, "calendar_event_created", {
+          conversationId,
+          eventId: created.id,
+          summary: pendingCalendarAction.event.summary,
+        });
+        replyContent = created.htmlLink
+          ? `Added "${pendingCalendarAction.event.summary}" to your calendar: ${created.htmlLink}`
+          : `Added "${pendingCalendarAction.event.summary}" to your calendar.`;
+      } catch (e) {
+        if (e instanceof ConnectionError) {
+          getLogger().warn({ err: e }, "calendar create blocked by expired token");
+          await markCalendarExpired(userId);
+          replyContent =
+            "Your Google Calendar connection expired. Reconnect, then confirm again and I'll add it.";
+        } else {
+          getLogger().error({ err: e }, "calendar event creation failed");
+          replyContent =
+            "I couldn't add that event to your calendar right now. Say it again in a moment and I'll retry.";
+        }
+      }
+    } else if (resolved.intent === "cancel") {
+      await markCalendarAction(pendingCalendarAction.messageId, "cancelled");
+      await trackEvent(userId, "calendar_event_cancelled", {
+        conversationId,
+        summary: pendingCalendarAction.event.summary,
+      });
+      replyContent = "Cancelled — nothing was added to your calendar.";
+    } else if (resolved.intent === "edit" && resolved.event) {
+      const ev = resolved.event;
+      if (ev.summary.trim().length > CALENDAR_SUMMARY_MAX) {
+        replyContent = "That event title is too long. Could you shorten it?";
+      } else if (!isCalendarEventActionable(ev)) {
+        replyContent =
+          "I still need a title and a start/end time for that event. Could you give those?";
+      } else {
+        await cancelPendingCalendarActions(conversationId);
+        await trackEvent(userId, "calendar_event_edited", {
+          conversationId,
+          summary: ev.summary,
+          start: ev.start,
+        });
+        const msg = await prisma.message.create({
+          data: {
+            conversationId,
+            role: "assistant",
+            content: `Here's the updated event I'll add:\n\n${renderCalendarEvent(ev)}\n\nReply **add** to add it, or **cancel** to discard it.`,
+            status: "complete",
+            parentMessageId: userMsg.id,
+            toolCalls: {
+              type: CALENDAR_ACTION_TYPE,
+              status: "pending",
+              event: {
+                summary: ev.summary,
+                start: ev.start,
+                end: ev.end,
+                ...(ev.description ? { description: ev.description } : {}),
+                ...(ev.location ? { location: ev.location } : {}),
+              },
+            },
+          },
+        });
+        res.status(200).json({
+          message: {
+            id: msg.id,
+            conversationId,
+            role: "assistant",
+            content: msg.content,
+            createdAt: msg.createdAt,
+          },
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          latencyMs: 0,
+        });
+        return;
+      }
+    } else if (resolved.intent === "ambiguous") {
+      replyContent =
+        "Add this event to your calendar, or not? Reply **add** to add it, or **cancel** to discard it.";
+    } else {
+      replyContent = `There's a pending event proposal: "${pendingCalendarAction.event.summary}". Resolve it first — reply **add** to add it, or **cancel** to discard it.`;
+    }
+    const reply = await prisma.message.create({
+      data: {
+        conversationId,
+        role: "assistant",
+        content: replyContent,
+        status: "complete",
+        parentMessageId: userMsg.id,
+      },
+    });
+    res.status(200).json({
+      message: {
+        id: reply.id,
+        conversationId,
+        role: "assistant",
+        content: reply.content,
+        createdAt: reply.createdAt,
+      },
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      latencyMs: 0,
+    });
+    return;
+  }
+
   // A pending agent draft forces resolution before any new work — the
   // execution agent's verbatim content sits in the thread awaiting confirm or
   // cancel. Confirm re-triggers the SAME agent with the draft as context; cancel
@@ -699,6 +835,128 @@ messageRouter.post("/message", requireAuth, async (req, res) => {
               to: proposal.to,
               subject: proposal.subject,
               body: proposal.body,
+            },
+          },
+        },
+      });
+      res.status(200).json({
+        message: {
+          id: reply.id,
+          conversationId,
+          role: "assistant",
+          content: reply.content,
+          createdAt: reply.createdAt,
+        },
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        latencyMs: 0,
+      });
+      return;
+    }
+  }
+
+  // Calendar create requests run BEFORE the interaction-agent classification so
+  // "add an event to my calendar" is never captured by spawn_agent. A cheap
+  // keyword gate guards the extra structured LLM call; non-create calendar
+  // mentions ("what's on my calendar...") fall through to the interaction agent.
+  if (calendarActionHint(content)) {
+    const calendarConnected = await isCalendarConnected(userId);
+    const proposal = await proposeCalendarAction(
+      userId,
+      [...messages, { role: "user", content }],
+      calendarConnected ? "connected" : "not_connected",
+    );
+    if (proposal.intent === "create_event") {
+      const ev = proposal.event;
+      if (!calendarConnected) {
+        const reply = await prisma.message.create({
+          data: {
+            conversationId,
+            role: "assistant",
+            content: "Connect Google Calendar first, then I can add events for you.",
+            status: "complete",
+            parentMessageId: userMsg.id,
+            toolCalls: { type: "googlecalendar.connect", status: "pending" },
+          },
+        });
+        res.status(200).json({
+          message: {
+            id: reply.id,
+            conversationId,
+            role: "assistant",
+            content: reply.content,
+            createdAt: reply.createdAt,
+          },
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          latencyMs: 0,
+        });
+        return;
+      }
+      if (ev.summary.trim().length > CALENDAR_SUMMARY_MAX) {
+        const reply = await prisma.message.create({
+          data: {
+            conversationId,
+            role: "assistant",
+            content: "That event title is too long. Could you shorten it?",
+            status: "complete",
+            parentMessageId: userMsg.id,
+          },
+        });
+        res.status(200).json({
+          message: {
+            id: reply.id,
+            conversationId,
+            role: "assistant",
+            content: reply.content,
+            createdAt: reply.createdAt,
+          },
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          latencyMs: 0,
+        });
+        return;
+      }
+      // Nothing is written yet: a concrete proposal needs a title + concrete
+      // start/end. Ask for the missing specifics rather than guessing a time.
+      if (!isCalendarEventActionable(ev)) {
+        const reply = await prisma.message.create({
+          data: {
+            conversationId,
+            role: "assistant",
+            content:
+              "I can add that — give me the event title and the day/time, and I'll set it up for you to confirm.",
+            status: "complete",
+            parentMessageId: userMsg.id,
+          },
+        });
+        res.status(200).json({
+          message: {
+            id: reply.id,
+            conversationId,
+            role: "assistant",
+            content: reply.content,
+            createdAt: reply.createdAt,
+          },
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          latencyMs: 0,
+        });
+        return;
+      }
+      await cancelPendingCalendarActions(conversationId);
+      const reply = await prisma.message.create({
+        data: {
+          conversationId,
+          role: "assistant",
+          content: `Here's the event I'll add:\n\n${renderCalendarEvent(ev)}\n\nReply **add** to add it, or **cancel** to discard it.`,
+          status: "complete",
+          parentMessageId: userMsg.id,
+          toolCalls: {
+            type: CALENDAR_ACTION_TYPE,
+            status: "pending",
+            event: {
+              summary: ev.summary,
+              start: ev.start,
+              end: ev.end,
+              ...(ev.description ? { description: ev.description } : {}),
+              ...(ev.location ? { location: ev.location } : {}),
             },
           },
         },

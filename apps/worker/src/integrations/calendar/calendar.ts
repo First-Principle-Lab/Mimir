@@ -20,6 +20,13 @@ export interface CalendarEvent {
   start?: string;
   end?: string;
   htmlLink?: string;
+  // updatedAt: event revision stamp (RFC3339) — the monitor's change cursor.
+  // status: "confirmed" | "tentative" | "cancelled" — cancellation is a distinct
+  // event worth surfacing, surfaced via the poll like any other change.
+  updatedAt?: string;
+  status?: string;
+  organizer?: string;
+  attendees?: string[];
 }
 
 interface RawCalendarEvent {
@@ -29,6 +36,10 @@ interface RawCalendarEvent {
   start?: { dateTime?: string; date?: string };
   end?: { dateTime?: string; date?: string };
   htmlLink?: string;
+  updated?: string;
+  status?: string;
+  organizer?: { email?: string; self?: boolean };
+  attendees?: { email?: string; self?: boolean }[];
 }
 
 function flattenEvent(e: RawCalendarEvent): CalendarEvent {
@@ -41,6 +52,12 @@ function flattenEvent(e: RawCalendarEvent): CalendarEvent {
     ...(e.start ? { start: e.start.dateTime ?? e.start.date ?? "" } : {}),
     ...(e.end ? { end: e.end.dateTime ?? e.end.date ?? "" } : {}),
     ...(e.htmlLink ? { htmlLink: e.htmlLink } : {}),
+    ...(e.updated ? { updatedAt: e.updated } : {}),
+    ...(e.status ? { status: e.status } : {}),
+    // organizer/attendees are only meaningful for the monitor's change-triaging
+    // (who added/changed this, do I need to respond) — pass through raw.
+    ...(e.organizer?.email ? { organizer: e.organizer.email } : {}),
+    ...(e.attendees?.length ? { attendees: e.attendees.map((a) => a.email ?? "").filter(Boolean) } : {}),
   };
 }
 
@@ -50,15 +67,19 @@ function flattenEvent(e: RawCalendarEvent): CalendarEvent {
 // /calendars/{id}/events both return 200.
 export async function fetchCalendarEvents(
   request: RequestFn,
-  opts: { calendarId?: string; timeMin?: string; timeMax?: string; maxResults?: number },
+  opts: { calendarId?: string; timeMin?: string; timeMax?: string; maxResults?: number; updatedMin?: string },
 ): Promise<CalendarEvent[]> {
   const calendarId = opts.calendarId?.trim() || "primary";
   const events = await rpc<{ items?: RawCalendarEvent[] }>(request, `/calendars/${encodeURIComponent(calendarId)}/events`, {
     query: {
       ...(opts.timeMin ? { timeMin: opts.timeMin } : {}),
       ...(opts.timeMax ? { timeMax: opts.timeMax } : {}),
+      ...(opts.updatedMin ? { updatedMin: opts.updatedMin } : {}),
       singleEvents: "true",
-      orderBy: "startTime",
+      // The monitor's updatedMin scans want the most-recently-changed events
+      // first (a >maxResults change burst keeps the freshest); the interactive
+      // list tool wants calendar order (startTime).
+      orderBy: opts.updatedMin ? "updated" : "startTime",
       maxResults: opts.maxResults ?? 10,
     },
   });

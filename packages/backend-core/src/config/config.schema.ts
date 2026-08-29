@@ -57,6 +57,10 @@ export const configSchema = z.object({
   // mail poll by default: github issues change rarely, and each sweep is N
   // REST calls per repo; 15-min keeps LLM triage cost bounded.
   GITHUB_POLL_CRON: z.string().default("*/15 * * * *"),
+  // Calendar poll — fixed-cadence changed-event sweep under the calendar
+  // webhook (same webhook + poll pairing as gmail/mail-poll). Default: every
+  // minute so a change missed by push is caught within a tick.
+  CALENDAR_POLL_CRON: z.string().default("* * * * *"),
   FACT_DARK_LAUNCH: z.coerce.boolean().default(false),
   FACT_SWEEP_CRON: z.string().default("0 * * * *"),
   // Web Push: VAPID keys. Absent => push delivery is disabled and events

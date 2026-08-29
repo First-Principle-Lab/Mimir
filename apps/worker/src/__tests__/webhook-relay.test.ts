@@ -16,6 +16,7 @@ const userId = `wh-relay-${randomUUID()}`;
 const convId = `wh-relay-conv-${randomUUID()}`;
 const gmailAgentId = `wh-relay-gmail-${randomUUID()}`;
 const browserAgentId = `wh-relay-browser-${randomUUID()}`;
+const calAgentId = `wh-relay-cal-${randomUUID()}`;
 const enqueuedJobIds: string[] = [];
 
 beforeAll(async () => {
@@ -27,15 +28,26 @@ beforeAll(async () => {
     data: [
       { id: gmailAgentId, userId, ownerConversationId: convId, taskDescription: "watch gmail", entity: "gmail", status: "active" },
       { id: browserAgentId, userId, ownerConversationId: convId, taskDescription: "watch web", entity: "browser", status: "active" },
+      { id: calAgentId, userId, ownerConversationId: convId, taskDescription: "watch calendar", entity: "googlecalendar", status: "active" },
       { id: `${gmailAgentId}-dorm`, userId, ownerConversationId: convId, taskDescription: "dormant gmail", entity: "gmail", status: "dormant" },
     ],
   });
 });
 
 afterAll(async () => {
-  for (const id of enqueuedJobIds) await q.getJob(id).then((j) => j?.remove());
+  for (const id of enqueuedJobIds) await q.getJob(id).then((j) => j?.remove().catch(() => {}));
+  // The in-process worker (queues.test.ts startWorkers) may have executed a
+  // relayed job mid-run, writing AgentEvents under these agents and a surfaced
+  // message into the conversation — clear dependents before the FK-bearing rows.
+  const agentIds = [gmailAgentId, browserAgentId, calAgentId, `${gmailAgentId}-dorm`];
+  await prisma.trigger.deleteMany({ where: { agentId: { in: agentIds } } });
+  await prisma.plan.deleteMany({ where: { agentId: { in: agentIds } } });
+  await prisma.reflectionEvent.deleteMany({ where: { agentId: { in: agentIds } } });
+  await prisma.agentEvent.deleteMany({ where: { agentId: { in: agentIds } } });
   await prisma.agent.deleteMany({ where: { userId } });
   await prisma.webhookEvent.deleteMany({ where: { rawPayload: { path: ["__test"], equals: userId } } });
+  await prisma.message.deleteMany({ where: { conversationId: convId } });
+  await prisma.conversationSummary.deleteMany({ where: { conversationId: convId } });
   await prisma.conversation.deleteMany({ where: { userId } });
   await prisma.user.delete({ where: { id: userId } });
   await q.close();
@@ -71,5 +83,25 @@ describe("webhook relay (6.1.4 entity fan-out)", () => {
     expect(processed).toBe(1);
     const updated = await prisma.webhookEvent.findUnique({ where: { id: row.id } });
     expect(updated?.processedAt).not.toBeNull();
+  });
+
+  test("a googlecalendar webhook fans out to googlecalendar-entity agents only (calendar monitor path)", async () => {
+    const row = await prisma.webhookEvent.create({
+      data: { provider: "googlecalendar", externalId: `chan:1-${randomUUID()}`, rawPayload: { message: "x", __test: userId } },
+    });
+
+    const processed = await drainWebhookEvents(q);
+
+    expect(processed).toBe(1);
+    const updated = await prisma.webhookEvent.findUnique({ where: { id: row.id } });
+    expect(updated?.processedAt).not.toBeNull();
+
+    const jobCal = await q.getJob(`webhook-${row.id}-${calAgentId}`);
+    const jobGmail = await q.getJob(`webhook-${row.id}-${gmailAgentId}`);
+    const jobBrowser = await q.getJob(`webhook-${row.id}-${browserAgentId}`);
+    enqueuedJobIds.push(`webhook-${row.id}-${calAgentId}`);
+    expect(jobCal?.data).toMatchObject({ agentId: calAgentId, trigger: "webhook" });
+    expect(jobGmail ?? null).toBeNull();
+    expect(jobBrowser ?? null).toBeNull();
   });
 });

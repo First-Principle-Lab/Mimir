@@ -1,6 +1,7 @@
 import { getLogger, getPrismaClient } from "@mimir/backend-core";
 import {
   agentJobs,
+  agentTriggers,
   emailJobs,
   onceJobs,
   factExtractionJobs,
@@ -21,6 +22,7 @@ export async function drainOutbox(
   emailQueue = emailJobs,
   onceQueue = onceJobs,
   factQueue = factExtractionJobs,
+  triggerQueue = agentTriggers,
   batchSize = 50,
 ): Promise<number> {
   const rows = await prisma.outboxEvent.findMany({
@@ -114,6 +116,29 @@ export async function drainOutbox(
           { err: e, outboxId: row.id },
           "extract_facts outbox relay failed; row left unprocessed for retry",
         );
+      }
+      continue;
+    }
+    if (row.eventType === "github_hook_register") {
+      const p = row.payload as { userId?: string };
+      if (!p.userId) {
+        getLogger().warn({ outboxId: row.id }, "github_hook_register outbox row missing userId; skipping");
+        await prisma.outboxEvent.update({ where: { id: row.id }, data: { processedAt: new Date() } });
+        continue;
+      }
+      try {
+        // Connect-time webhook registration: a one-off agent-triggers job that
+        // runs immediately (not at the next daily sweep). Keyed by the outbox
+        // ROW id (not the user) so a re-connect after disconnect is a fresh job
+        // that actually runs, and spread retryPolicy like every other branch so
+        // a transient GitHub error retries instead of silently deferring to the
+        // daily sweep.
+        await triggerQueue.add("github-hook-register", { userId: p.userId }, { ...retryPolicy, jobId: `gh-hook-${row.id}` });
+        await prisma.outboxEvent.update({ where: { id: row.id }, data: { processedAt: new Date() } });
+        enqueued += 1;
+        getLogger().info({ outboxId: row.id, userId: p.userId }, "github hook register outbox row relayed to agent-triggers");
+      } catch (e) {
+        getLogger().error({ err: e, outboxId: row.id }, "github hook register relay failed; row left unprocessed for retry");
       }
       continue;
     }

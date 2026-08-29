@@ -1,11 +1,54 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import { cn } from "@/lib/utils";
 
 const WORD_MS = 500;
+
+// react-markdown escapes raw HTML (safe by default), so a `<display_draft>`
+// widget block emitted by an assistant would leak its literal tags into the
+// chat. Convert the block into a fenced ```draft block and render it as a card
+// via the custom `code` component below.
+function renderDraftBlocks(content: string): string {
+  return content.replace(
+    /<display_draft>([\s\S]*?)<\/display_draft>/g,
+    (_m, inner: string) => `\n\n\`\`\`draft\n${inner.trim()}\n\`\`\`\n\n`,
+  );
+}
+
+// A draft block's first line is the title; the rest are `icon field` rows
+// (📅 date, 🕚 time, 👤 people, 📍 place). Render as a bordered card. Lines go
+// through markdown so assistant emphasis like **bold** renders — bare <p> text
+// would literally show the asterisks.
+function DraftLine({ text, className }: { text: string; className?: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkBreaks]}
+      components={{ p: ({ children }) => <p className={className}>{children}</p> }}
+    >
+      {text}
+    </ReactMarkdown>
+  );
+}
+
+function DraftCard({ text }: { text: string }) {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const first = lines.shift();
+  return (
+    <div className="my-2 rounded-lg border border-border bg-secondary/40 p-3">
+      {first ? <DraftLine text={first} className="font-semibold" /> : null}
+      {lines.length ? (
+        <div className="mt-1 space-y-0.5 text-[0.9rem] text-foreground/80">
+          {lines.map((l, i) => (
+            <DraftLine key={i} text={l} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const components: Components = {
   p: ({ children }) => <p className="my-1.5 first:mt-0 last:mb-0">{children}</p>,
@@ -50,6 +93,10 @@ const components: Components = {
   ),
   code: ({ className, children }) => {
     const text = Array.isArray(children) ? children.join("") : String(children ?? "");
+    // Assistant-emitted draft widget -> a card, not a code block.
+    if (/language-draft/.test(className ?? "")) {
+      return <DraftCard text={text} />;
+    }
     // A fenced block carries a `language-*` class; one without a language still
     // spans newlines, so treat it as a block (rendered in the `pre` below) rather
     // than an inline pill.
@@ -63,11 +110,18 @@ const components: Components = {
       </code>
     );
   },
-  pre: ({ children }) => (
-    <pre className="my-2 overflow-x-auto rounded-md bg-secondary/60 p-3 text-[0.875rem] leading-6 first:mt-0 last:mb-0">
-      {children}
-    </pre>
-  ),
+  pre: ({ children }) => {
+    const hasDraftCard = (n: { props?: { className?: string } }) =>
+      n?.props?.className?.includes("language-draft");
+    // The draft card already renders its own container — don't wrap it in the
+    // mono pre box.
+    if (hasDraftCard(children as { props?: { className?: string } })) return <>{children}</>;
+    return (
+      <pre className="my-2 overflow-x-auto rounded-md bg-secondary/60 p-3 text-[0.875rem] leading-6 first:mt-0 last:mb-0">
+        {children}
+      </pre>
+    );
+  },
   blockquote: ({ children }) => (
     <blockquote className="my-1.5 border-l-2 border-muted-foreground/40 pl-3 text-muted-foreground first:mt-0 last:mb-0">
       {children}
@@ -179,6 +233,8 @@ export function Markdown({
   doneRef.current = onDone;
   const containerRef = useRef<HTMLDivElement | null>(null);
 
+  const content = useMemo(() => renderDraftBlocks(children), [children]);
+
   useLayoutEffect(() => {
     if (!streaming) return;
     const total = containerRef.current?.querySelectorAll(".md-word").length ?? 0;
@@ -193,7 +249,7 @@ export function Markdown({
         rehypePlugins={[wordStreamPlugin(streaming, wordDelay)] as never}
         components={components}
       >
-        {children}
+        {content}
       </ReactMarkdown>
     </div>
   );
