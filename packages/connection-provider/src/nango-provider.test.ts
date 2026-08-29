@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
-process.env.REDIS_URL = "redis://localhost:6379";
+process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "connection-provider-test-secret";
 
 // Intercept @nangohq/node BEFORE the provider imports it. Nango is only

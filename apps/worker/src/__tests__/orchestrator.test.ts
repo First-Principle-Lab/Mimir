@@ -5,7 +5,7 @@ import type { PlanStep } from "../agent/planner.js";
 // planner.ts (and its reflectr/type imports) pull backend-core at import time,
 // which needs these env vars even though these tests never touch the DB.
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
-process.env.REDIS_URL = "redis://localhost:6379";
+process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "orchestrator-test-secret";
 
 // Phase 9 orchestrator tests. executePlanSteps with no agentId/planId writes no

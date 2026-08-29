@@ -3,7 +3,7 @@ import { createHmac, randomUUID } from "node:crypto";
 
 // storeWebhook touches the DB; the signature/verify functions are pure.
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
-process.env.REDIS_URL = "redis://localhost:6379";
+process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "webhooks-test-secret";
 
 const { getPrismaClient } = await import("@mimir/backend-core");

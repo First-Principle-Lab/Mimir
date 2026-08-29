@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 // ack.ts imports observability -> config, which validates env at import.
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
-process.env.REDIS_URL = "redis://localhost:6379";
+process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "ack-test-secret";
 
 // Force the fallback path deterministically (no real LLM call): an injected

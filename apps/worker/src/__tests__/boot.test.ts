@@ -5,7 +5,7 @@ import { Queue } from "bullmq";
 // index.ts validates config at import time; env must be set before the spawned
 // entrypoint (and this file's own imports) run.
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
-process.env.REDIS_URL = "redis://localhost:6379";
+process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "boot-test-secret";
 
 const workerDir = path.resolve(import.meta.dir, "../..");

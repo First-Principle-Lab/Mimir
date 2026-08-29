@@ -7,7 +7,7 @@ import { Redis } from "ioredis";
 
 // Config is validated at import time — set env before any backend-core module loads.
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
-process.env.REDIS_URL = "redis://localhost:6379";
+process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "e2e-ack-secret";
 // These tests drive a real OpenRouter call, so they need the key. Without it the
 // whole suite is skipped (rather than throwing at import, which otherwise fails

@@ -6,7 +6,7 @@ import { io, type Socket } from "socket.io-client";
 // module validates env at load time. Dynamic import keeps evaluation ordered.
 process.env.JWT_SECRET = "socket-test-secret";
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
-process.env.REDIS_URL = "redis://localhost:6379";
+process.env.REDIS_URL = "redis://localhost:6380";
 
 const { initSocket, emitToUser } = await import("../infra/socket.js");
 const { signAccessToken } = await import("../auth/tokens.js");

@@ -6,7 +6,7 @@ import { Redis } from "ioredis";
 
 // Config is validated at import time — set env before any backend-core module loads.
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
-process.env.REDIS_URL = "redis://localhost:6379";
+process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "e2e-phase4-secret";
 if (!process.env.OPENROUTER_API_KEY) {
   throw new Error("OPENROUTER_API_KEY required for the real-LLM E2E test");

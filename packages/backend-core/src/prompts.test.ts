@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
-process.env.REDIS_URL = "redis://localhost:6379";
+process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "prompts-test-secret";
 
 const { chatSystemPrompt, executionSystemPrompt, loadPrompt } = await import("./prompts.js");

@@ -4,7 +4,7 @@ import type { LlmMessage } from "@mimir/shared-types";
 
 // reflector.ts / agent-execution.ts load prisma + config at import time; env must be set first.
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
-process.env.REDIS_URL = "redis://localhost:6379";
+process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "reflector-test-secret";
 
 const { getPrismaClient } = await import("@mimir/backend-core");

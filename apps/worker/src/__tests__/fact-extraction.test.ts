@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { ChatResult, LlmMessage } from "@mimir/shared-types";
 
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
-process.env.REDIS_URL = "redis://localhost:6379";
+process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "fact-extraction-test-secret";
 
 const { getPrismaClient } = await import("@mimir/backend-core");

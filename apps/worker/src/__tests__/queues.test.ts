@@ -3,7 +3,7 @@ import { Queue, Worker } from "bullmq";
 
 // Config is validated at import time; set env before importing queues.js.
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
-process.env.REDIS_URL = "redis://localhost:6379";
+process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "queue-test-secret";
 
 const { agentJobs, agentTriggerProcessor, agentTriggers, emailJobs, failedAgentJobs, onceJobs, scheduleMailPollSweep, startWorkers, webhookProcessing, wireDlq } = await import("../infra/queues.js");
