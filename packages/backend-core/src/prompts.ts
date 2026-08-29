@@ -42,6 +42,14 @@ export function chatSystemPrompt(): string {
   return chatPromptCache;
 }
 
+export type IntegrationPromptKey = "calendar" | "github" | "notion";
+
+// Per-integration task-agent guidance (calendar.md / github.md / notion.md),
+// appended to the execution prompt when the run's task targets that provider.
+export function integrationSystemPrompt(key: IntegrationPromptKey): string {
+  return loadPrompt(`${key}.md`);
+}
+
 // Execution Agent (worker) system prompt: the execution-engine persona plus the
 // concrete task, user context, and folded prior-summary for this run. The
 // factual-only guard is kept from the original inline prompt — fabrication in an
@@ -50,6 +58,9 @@ export function executionSystemPrompt(opts: {
   task: string;
   context?: string | null;
   contextSummary?: string | null;
+  // When the run targets a managed integration, append its task-agent guidance
+  // (calendar/github/notion) so the model follows that provider's rules.
+  integration?: IntegrationPromptKey | null;
 }): string {
   return [
     loadPrompt("execution_engine.md"),
@@ -57,6 +68,7 @@ export function executionSystemPrompt(opts: {
     opts.context ? `The user's latest message to address: ${opts.context}` : "",
     opts.contextSummary ? `Prior summary of this agent's activity:\n${opts.contextSummary}` : "",
     "You receive event history and current integration data. Produce a concise, useful result for Mimir.",
+    opts.integration ? integrationSystemPrompt(opts.integration) : "",
     loadPrompt("execution_facts.md"),
   ]
     .filter(Boolean)
@@ -67,11 +79,12 @@ export function executionSystemPrompt(opts: {
 // Agent. Same factual-only guard as the agent path; the persona + no-persistence
 // contract come from one_shot.md. UseCase for the LLM call stays
 // "agent_execution" so deployments don't need a new model-config entry.
-export function oneShotSystemPrompt(): string {
+export function oneShotSystemPrompt(opts: { integration?: IntegrationPromptKey | null } = {}): string {
   return [
     loadPrompt("execution_engine.md"),
     loadPrompt("one_shot.md"),
     "You receive the user's query. Produce a concise, useful answer for Mimir.",
+    opts.integration ? integrationSystemPrompt(opts.integration) : "",
     loadPrompt("execution_facts.md"),
   ]
     .filter(Boolean)

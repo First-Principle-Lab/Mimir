@@ -17,6 +17,7 @@ export { trackModelCall, backfillCost, rollDailyUsage } from "./usage.js";
 export { searchActiveFacts, searchActiveFactsWithRelations } from "./facts.js";
 export type { FactHit } from "./facts.js";
 export { loadPrompt, chatSystemPrompt, executionSystemPrompt, oneShotSystemPrompt, frameResultForUser } from "./prompts.js";
+export type { IntegrationPromptKey } from "./prompts.js";
 export type { FrameResultOptions } from "./prompts.js";
 export { generateAck, ACK_FALLBACKS } from "./ack.js";
 export type { AckKind, GenerateAckOptions } from "./ack.js";

@@ -5,7 +5,7 @@ process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
 process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "prompts-test-secret";
 
-const { chatSystemPrompt, executionSystemPrompt, loadPrompt } = await import("./prompts.js");
+const { chatSystemPrompt, executionSystemPrompt, integrationSystemPrompt, loadPrompt, oneShotSystemPrompt } = await import("./prompts.js");
 
 describe("prompt loader", () => {
   test("loads a raw prompt file from disk", () => {
@@ -31,6 +31,24 @@ describe("prompt loader", () => {
     expect(p).toContain("ping me when");
     expect(p).toContain("so far: nothing");
     expect(p).toContain("Report ONLY facts"); // execution_facts.md
+  });
+
+  test("executionSystemPrompt appends the integration guidance when targeted", () => {
+    const p = executionSystemPrompt({ task: "list my open github issues", integration: "github" });
+    expect(p).toContain("GitHub Task agent"); // github.md
+    const without = executionSystemPrompt({ task: "watch for urgent email" });
+    expect(without).not.toContain("GitHub Task agent");
+  });
+
+  test("oneShotSystemPrompt appends the integration guidance when targeted", () => {
+    expect(oneShotSystemPrompt({ integration: "notion" })).toContain("Notion Task agent");
+    expect(oneShotSystemPrompt()).not.toContain("Notion Task agent");
+  });
+
+  test("integrationSystemPrompt loads each staged provider file", () => {
+    expect(integrationSystemPrompt("calendar")).toContain("Calendar Task agent");
+    expect(integrationSystemPrompt("github")).toContain("GitHub Task agent");
+    expect(integrationSystemPrompt("notion")).toContain("Notion Task agent");
   });
 });
 

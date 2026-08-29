@@ -12,7 +12,7 @@ import {
   trackModelCall,
   rollDailyUsage,
 } from "@mimir/backend-core";
-import type { InputJsonValue, LlmCallOptions, LlmTool, ToolCall } from "@mimir/backend-core";
+import type { InputJsonValue, IntegrationPromptKey, LlmCallOptions, LlmTool, ToolCall } from "@mimir/backend-core";
 import type { ChatResult, LlmMessage } from "@mimir/shared-types";
 import { toLlmTool, type Task } from "@mimir/tasks";
 import { ConnectionError, GMAIL_INTEGRATION, ProviderError, ProviderErrorKind } from "@mimir/connection-provider";
@@ -26,6 +26,27 @@ import { agentTasksFor } from "./tasks-registry.js";
 import { parseSurfaceVerdict } from "./triage.js";
 
 const prisma = getPrismaClient();
+
+// The per-integration task-agent prompts (calendar/github/notion.md) get
+// appended to the execution system note when the run's task targets that
+// provider. Detection is keyword-based (the task text usually names the tool or
+// provider); ordered notion -> calendar -> github so a task mentioning the
+// provider name wins. Kept deliberately conservative: a generic "meeting" or
+// "issue" alone does NOT trigger, so email/browser tasks stay prompt-clean.
+const INTEGRATION_HINTS: Array<[IntegrationPromptKey, RegExp]> = [
+  ["notion", /notion/i],
+  ["calendar", /calendar|google\s*calendar|events?\b|availability|appointment|free\s+slot|book\s+(a\s+)?(meeting|call|slot)/i],
+  ["github", /github|pull\s+requests?\b|issues?\b|repositories?\b|pr\s*/i],
+];
+
+function detectIntegration(...texts: Array<string | null | undefined>): IntegrationPromptKey | undefined {
+  const blob = texts.filter(Boolean).join(" ");
+  if (!blob) return undefined;
+  for (const [key, re] of INTEGRATION_HINTS) {
+    if (re.test(blob)) return key;
+  }
+  return undefined;
+}
 
 // Context = contextSummary (if set) + last N AgentEvents, capped at
 // AGENT_CONTEXT_MAX_TOKENS. Rough token estimate (chars / 4) for the budget cap.
@@ -50,11 +71,13 @@ async function loadContext(agentId: string, context?: string): Promise<{ systemN
   }
 
   // Execution Agent system prompt: execution_engine.md persona + this run's
-  // concrete task, user context, and folded prior-summary.
+  // concrete task, user context, folded prior-summary, and (when the task targets
+  // one) the integration's task-agent guidance.
   const systemNote = executionSystemPrompt({
     task: agent.taskDescription,
     context,
     contextSummary: agent.contextSummary,
+    integration: detectIntegration(agent.entity, agent.taskDescription, context),
   });
 
   return { systemNote, history };
@@ -615,7 +638,7 @@ export async function executeOnce(job: Job, opts?: { caller?: LlmCaller }): Prom
   }
 
   const messages: LlmMessage[] = [
-    { role: "system", content: oneShotSystemPrompt() },
+    { role: "system", content: oneShotSystemPrompt({ integration: detectIntegration(content) }) },
     { role: "user", content },
   ];
   const availableTasks = await agentTasksFor(userId, { includeTriggerTools: false });
