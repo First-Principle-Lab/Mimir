@@ -74,7 +74,7 @@ export async function sendEmailJob(job: Job): Promise<void> {
   let sentId: string;
   try {
     const provider = gmailProvider();
-    const transport: GmailTransport = (path, opts) => provider.gmailRequest(userId, path, opts);
+    const transport: GmailTransport = (path, opts) => provider.apiRequest(userId, path, opts);
     sentId = await sendGmailDraft(transport, draftId);
   } catch (e) {
     if (e instanceof ConnectionError) {

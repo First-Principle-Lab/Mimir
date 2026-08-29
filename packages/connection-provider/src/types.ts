@@ -2,18 +2,21 @@
 // interface pays for itself — but keep it minimal: no provider-specific knobs
 // leak out, only the five auth operations the routes/worker need.
 
-export interface GmailRequestOptions {
+export interface ApiRequestOptions {
   method?: string;
   body?: unknown;
   // Query params expanded into repeated key=value pairs when a value is an
   // array (Gmail's `metadataHeaders=From&metadataHeaders=Subject`).
   query?: Record<string, string | number | string[]>;
+  // Extra HTTP headers (e.g. Notion's Notion-Version). Composio emits them as
+  // `in: "header"` proxy parameters; the Nango path passes them to fetch.
+  headers?: Record<string, string>;
   // Force a specific connected account instead of the store row (Composio's
   // syncConnection heal probe, where no local row may exist yet).
   connectionId?: string;
 }
 
-export interface GmailRequestResult {
+export interface ApiRequestResult {
   status: number;
   data: unknown;
 }
@@ -27,10 +30,11 @@ export interface ConnectionProvider {
   // Heal a missing local row from the upstream provider (Composio by user's
   // gmail account; Nango by tag). Returns whether a row now exists.
   syncConnection(userId: string, connectionId?: string): Promise<boolean>;
-  // The single Gmail API transport. Credentials never reach this app: Nango
-  // injects them client-side, Composio injects them server-side (proxyExecute).
-  // Returns the upstream HTTP status + parsed body so callers map errors once.
-  gmailRequest(userId: string, path: string, opts?: GmailRequestOptions): Promise<GmailRequestResult>;
+// The single API transport, shared by every provider (Gmail via proxyExecute
+  // or Nango token; calendar/github/notion via proxyExecute). Credentials never
+  // reach this app. Returns the upstream HTTP status + parsed body so callers
+  // map errors once.
+  apiRequest(userId: string, path: string, opts?: ApiRequestOptions): Promise<ApiRequestResult>;
   revoke(userId: string): Promise<void>;
 }
 

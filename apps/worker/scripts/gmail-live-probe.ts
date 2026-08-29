@@ -12,7 +12,7 @@ const userId = process.argv[2];
 if (!userId) throw new Error("usage: bun --env-file=.env scripts/gmail-live-probe.ts <userId>");
 
 const provider = gmailProvider(cfg, prisma.integrationConnection, `${cfg.PUBLIC_API_URL ?? cfg.WEB_APP_URL ?? ""}/api/v1/integrations/gmail/callback`);
-const transport: GmailTransport = (path, opts) => provider.gmailRequest(userId, path, opts);
+const transport: GmailTransport = (path, opts) => provider.apiRequest(userId, path, opts);
 
 // ---- Bug 2: is the drop upstream (transport) or in local parsing? ----
 const list = (await transport("/gmail/v1/users/me/messages", { query: { maxResults: 1 } })).data as { messages?: { id: string }[] };

@@ -1,7 +1,7 @@
 import { beforeEach, mock } from "bun:test";
 import { describe, expect, test } from "bun:test";
 
-// Mock @composio/core BEFORE importing the provider so gmailRequest's
+// Mock @composio/core BEFORE importing the provider so apiRequest's
 // proxyExecute call surfaces the exact params we pass and lets us drive status /
 // thrown-error behavior.
 interface ProxyCall {
@@ -56,7 +56,7 @@ function provider(s: ReturnType<typeof store>): Provider {
   return new ComposioConnectionProvider({ apiKey: "k", authConfigId: "ac_x", store: s.store });
 }
 
-describe("ComposioConnectionProvider gmailRequest", () => {
+describe("ComposioConnectionProvider apiRequest", () => {
   beforeEach(() => {
     proxyCall = null;
     proxyStatus = 200;
@@ -66,14 +66,14 @@ describe("ComposioConnectionProvider gmailRequest", () => {
 
   test("resolves the connectionId from the store row and proxies the request", async () => {
     const p = provider(store({ connectionId: "ca-1", status: "connected" }));
-    const res = await p.gmailRequest("user-1", "/gmail/v1/users/me/profile", {});
+    const res = await p.apiRequest("user-1", "/gmail/v1/users/me/profile", {});
     expect(res).toEqual({ status: 200, data: { emailAddress: "me@example.com" } });
     expect(proxyCall).toMatchObject({ endpoint: "/gmail/v1/users/me/profile", method: "GET", connectedAccountId: "ca-1" });
   });
 
   test("repeated query params become repeated proxy parameters (metadataHeaders)", async () => {
     const p = provider(store({ connectionId: "ca-1", status: "connected" }));
-    await p.gmailRequest("user-1", "/gmail/v1/users/me/messages/msg-1", {
+    await p.apiRequest("user-1", "/gmail/v1/users/me/messages/msg-1", {
       query: { format: "metadata", metadataHeaders: ["From", "Subject", "List-Unsubscribe", "In-Reply-To"] },
     });
     const headers = proxyCall!.parameters!.filter((x) => x.name === "metadataHeaders").map((x) => x.value);
@@ -82,22 +82,33 @@ describe("ComposioConnectionProvider gmailRequest", () => {
 
   test("a scalar q param serializes as a single proxy parameter (search)", async () => {
     const p = provider(store({ connectionId: "ca-1", status: "connected" }));
-    await p.gmailRequest("user-1", "/gmail/v1/users/me/messages", {
+    await p.apiRequest("user-1", "/gmail/v1/users/me/messages", {
       query: { maxResults: 20, q: "from:openrouter" },
     });
     const q = proxyCall!.parameters!.filter((x) => x.name === "q");
     expect(q).toEqual([{ in: "query", name: "q", value: "from:openrouter" }]);
   });
 
+  test("headers become in:header proxy parameters (Notion-Version)", async () => {
+    const p = provider(store({ connectionId: "ca-1", status: "connected" }));
+    await p.apiRequest("user-1", "/v1/search", {
+      method: "POST",
+      headers: { "Notion-Version": "2022-06-28" },
+    });
+    expect(proxyCall!.parameters).toEqual([
+      { in: "header", name: "Notion-Version", value: "2022-06-28" },
+    ]);
+  });
+
   test("honours an explicit connectionId override (syncConnection heal probe)", async () => {
     const p = provider(store(null));
-    await p.gmailRequest("user-1", "/gmail/v1/users/me/profile", { connectionId: "ca-found" });
+    await p.apiRequest("user-1", "/gmail/v1/users/me/profile", { connectionId: "ca-found" });
     expect(proxyCall!.connectedAccountId).toBe("ca-found");
   });
 
   test("throws ConnectionError(not_connected) when no connection row and no override", async () => {
     const p = provider(store(null));
-    await expect(p.gmailRequest("user-1", "/gmail/v1/users/me/profile")).rejects.toMatchObject({
+    await expect(p.apiRequest("user-1", "/gmail/v1/users/me/profile")).rejects.toMatchObject({
       kind: "not_connected",
     });
   });
@@ -105,13 +116,13 @@ describe("ComposioConnectionProvider gmailRequest", () => {
   test("maps a thrown Composio APIError (401) to ConnectionError(expired)", async () => {
     const p = provider(store({ connectionId: "ca-1", status: "connected" }));
     proxyThrow = Object.assign(new Error("unauthorized"), { status: 401 });
-    await expect(p.gmailRequest("user-1", "/gmail/v1/users/me/profile")).rejects.toMatchObject({ kind: "expired" });
+    await expect(p.apiRequest("user-1", "/gmail/v1/users/me/profile")).rejects.toMatchObject({ kind: "expired" });
   });
 
   test("maps a thrown Composio APIError (404) to ConnectionError(not_connected)", async () => {
     const p = provider(store({ connectionId: "ca-1", status: "connected" }));
     proxyThrow = Object.assign(new Error("gone"), { status: 404 });
-    await expect(p.gmailRequest("user-1", "/gmail/v1/users/me/profile")).rejects.toMatchObject({
+    await expect(p.apiRequest("user-1", "/gmail/v1/users/me/profile")).rejects.toMatchObject({
       kind: "not_connected",
     });
   });
@@ -127,7 +138,7 @@ describe("ComposioConnectionProvider gmailRequest", () => {
       },
     });
     proxyThrow = Object.assign(new Error(`422 ${nested}`), { status: 422, code: 1706 });
-    await expect(p.gmailRequest("user-1", "/gmail/v1/users/me/profile")).rejects.toMatchObject({ kind: "expired" });
+    await expect(p.apiRequest("user-1", "/gmail/v1/users/me/profile")).rejects.toMatchObject({ kind: "expired" });
   });
 });
 

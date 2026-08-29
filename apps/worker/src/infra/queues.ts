@@ -7,6 +7,7 @@ import {
 } from "../agent/fact-extraction-run.js";
 import { runDormancySweep } from "../agent/dormancy.js";
 import { sendEmailJob } from "../email/email-send-job.js";
+import { pollGithubActivity } from "../integrations/github/github-poll.js";
 import { pollImportantMail } from "./mail-poll.js";
 import { runTriggerSweep, TRIGGER_TICK_CRON } from "../agent/triggers.js";
 import { runWatchRenewal } from "../integrations/gmail/watch-renewal.js";
@@ -77,6 +78,17 @@ export async function scheduleMailPollSweep(): Promise<void> {
   );
 }
 
+// GitHub open-issue sweep; slower than the mail poll (GITHUB_POLL_CRON, default
+// 15-min) because issues change rarely and every surfaced item costs an LLM
+// triage call.
+export async function scheduleGithubPollSweep(): Promise<void> {
+  await agentTriggers.upsertJobScheduler(
+    "github-poll-sweep",
+    { pattern: cfg.GITHUB_POLL_CRON, immediately: false },
+    { name: "github-poll-sweep", data: { githubPoll: true } },
+  );
+}
+
 // 1-min trigger tick: reuses the agent-triggers queue like the other
 // cheap, low-frequency sweeps — no dedicated queue.
 export async function scheduleTriggerTick(): Promise<void> {
@@ -96,7 +108,7 @@ export async function scheduleWatchRenewal(): Promise<void> {
   );
 }
 
-// Daily connection canary — exercises gmail gmailRequest so a silent break in
+// Daily connection canary — exercises gmail apiRequest so a silent break in
 // the provider's proxy transport is caught by a job, not a user.
 export async function scheduleConnectionCanary(): Promise<void> {
   await agentTriggers.upsertJobScheduler(
@@ -123,6 +135,9 @@ export async function agentTriggerProcessor(job: Job): Promise<void> {
       return;
     case "mail-poll-sweep":
       await pollImportantMail();
+      return;
+    case "github-poll-sweep":
+      await pollGithubActivity();
       return;
     case "trigger-tick":
       await runTriggerSweep();

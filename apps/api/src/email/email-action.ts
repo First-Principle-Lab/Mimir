@@ -197,7 +197,7 @@ export function gmailProvider(): ReturnType<typeof gmailProviderOf> {
 
 export async function createEmailDraft(userId: string, draft: { to: string; subject: string; body: string }): Promise<{ draftId: string; messageId: string }> {
   const provider = gmailProvider();
-  const transport: GmailTransport = (path, opts) => provider.gmailRequest(userId, path, opts);
+  const transport: GmailTransport = (path, opts) => provider.apiRequest(userId, path, opts);
   const from = await getGmailProfile(transport);
   const created = await createGmailDraft(transport, { from, ...draft });
   return { draftId: created.id, messageId: created.messageId };
@@ -205,7 +205,7 @@ export async function createEmailDraft(userId: string, draft: { to: string; subj
 
 export async function deleteEmailDraft(userId: string, draftId: string): Promise<void> {
   const provider = gmailProvider();
-  const transport: GmailTransport = (path, opts) => provider.gmailRequest(userId, path, opts);
+  const transport: GmailTransport = (path, opts) => provider.apiRequest(userId, path, opts);
   await deleteGmailDraft(transport, draftId);
 }
 

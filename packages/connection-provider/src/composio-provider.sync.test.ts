@@ -8,13 +8,21 @@ import { describe, expect, test } from "bun:test";
 // flips to simulate a dead connection.
 let account: { id: string } | null = { id: "ca-active" };
 let probeStatus = 200;
+let probeEndpoint = "";
+let listArgs: { userIds?: string[]; toolkitSlugs?: string[]; statuses?: string[] } | null = null;
 mock.module("@composio/core", () => {
   class Composio {
     connectedAccounts = {
-      list: async () => ({ items: account ? [account] : [] }),
+      list: async (args: { userIds?: string[]; toolkitSlugs?: string[]; statuses?: string[] }) => {
+        listArgs = args;
+        return { items: account ? [account] : [] };
+      },
     };
     tools = {
-      proxyExecute: async () => ({ status: probeStatus, data: { emailAddress: "a@example.com" } }),
+      proxyExecute: async (body: { endpoint: string }) => {
+        probeEndpoint = body.endpoint;
+        return { status: probeStatus, data: { emailAddress: "a@example.com" } };
+      },
     };
   }
   return { Composio };
@@ -85,5 +93,29 @@ describe("ComposioConnectionProvider syncConnection (stale-row heal)", () => {
     } finally {
       probeStatus = 200;
     }
+  });
+});
+
+describe("ComposioConnectionProvider parameterized (non-gmail toolkits)", () => {
+  beforeEach(() => {
+    probeStatus = 200;
+    listArgs = null;
+    probeEndpoint = "";
+  });
+
+  test("a github-configured instance uses its own slug, probe path, and row key", async () => {
+    const s = store(null);
+    const p = new ComposioConnectionProvider({
+      apiKey: "k",
+      authConfigId: "ac_g",
+      store: s.store,
+      providerKey: "github",
+      toolkitSlug: "github",
+      probePath: "/user",
+    });
+    expect(await p.syncConnection("user-1")).toBe(true);
+    expect(listArgs?.toolkitSlugs).toEqual(["github"]);
+    expect(probeEndpoint).toBe("/user");
+    expect(s.row()).toEqual({ connectionId: "ca-active", status: "connected" });
   });
 });

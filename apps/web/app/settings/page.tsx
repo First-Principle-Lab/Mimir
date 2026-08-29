@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { SiteHeader } from "@/components/chat/site-header";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { disablePush, enablePush, inDesktopShell, pushEnabled } from "@/lib/push";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api/v1";
@@ -122,6 +123,19 @@ export default function SettingsPage() {
     void refresh();
   };
 
+  const disconnectAll = async () => {
+    setError(null);
+    const connected = integrations.filter((i) => i.connected);
+    const results = await Promise.allSettled(
+      connected.map((it) =>
+        fetch(`${API}/integrations/${it.key}/disconnect`, { method: "POST", credentials: "include" }),
+      ),
+    );
+    const failed = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok)).length;
+    if (failed > 0) setError(`Couldn't disconnect ${failed} integration${failed === 1 ? "" : "s"}`);
+    void refresh();
+  };
+
   const addMcp = async () => {
     setError(null);
     if (!mcpName.trim() || !mcpUrl.trim()) {
@@ -148,10 +162,18 @@ export default function SettingsPage() {
     void refresh();
   };
 
+  const connectedCount = integrations.filter((i) => i.connected).length;
+
   return (
     <div className="min-h-dvh bg-background text-foreground">
-      <SiteHeader />
-      <main className="mx-auto w-full max-w-3xl space-y-10 px-5 py-8">
+      <main className="mx-auto w-full max-w-3xl space-y-6 px-5 py-8">
+        <Link
+          href="/chat"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none"
+        >
+          <ArrowLeft className="size-4" aria-hidden="true" />
+          Back to chat
+        </Link>
         <h1 className="font-condensed text-2xl font-semibold">Settings</h1>
 
         <section>
@@ -179,6 +201,20 @@ export default function SettingsPage() {
 
         <section>
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">Connections</h2>
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              {connectedCount === 0 ? "No integrations connected" : `${connectedCount} connected`}
+            </p>
+            {connectedCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => void disconnectAll()}
+                className="cursor-pointer rounded-md border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-red-400/50 hover:text-red-300 focus-visible:outline-none"
+              >
+                Disconnect all
+              </button>
+            ) : null}
+          </div>
           <ul className="divide-y divide-border rounded-lg border border-border">
             {integrations.map((it) => (
               <li key={it.key} className="flex items-center justify-between px-4 py-3">

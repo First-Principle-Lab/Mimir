@@ -1,6 +1,6 @@
 import { Nango } from "@nangohq/node";
 import { ConnectionError, NotConfiguredError, ProviderError } from "./types.js";
-import type { ConnectionErrorKind, ConnectionProvider, GmailRequestOptions, GmailRequestResult, IntegrationConnectionStore } from "./types.js";
+import type { ConnectionErrorKind, ConnectionProvider, ApiRequestOptions, ApiRequestResult, IntegrationConnectionStore } from "./types.js";
 
 // Nango's provider config key for the Gmail API is `google-mail` (the id the
 // account owner set up in Nango). If the Nango integration is ever renamed,
@@ -115,11 +115,13 @@ export class NangoConnectionProvider implements ConnectionProvider {
     return conn.credentials.access_token;
   }
 
-  // Mirror of Composio's gmailRequest so the shared Gmail transport works on the
+  // Mirror of Composio's apiRequest so the shared Gmail transport works on the
   // Nango rollback path too: resolve the raw token, then hit gmail.googleapis.com
   // directly. Same { status, data } contract, same upstream error mapping upstream
-  // (gmail.ts), so switching back to Nango requires no Gmail-layer changes.
-  async gmailRequest(userId: string, path: string, opts: GmailRequestOptions = {}): Promise<GmailRequestResult> {
+  // (http-rpc.ts), so switching back to Nango requires no Gmail-layer changes.
+  // ponytail: still Gmail-only (GMAIL_API base + gmail token scopes) — it is
+  // exclusively the gmail rollback path; calendar/github/notion are Composio-only.
+  async apiRequest(userId: string, path: string, opts: ApiRequestOptions = {}): Promise<ApiRequestResult> {
     const connectionId = await this.findConnectionId(userId);
     if (!connectionId) throw new ConnectionError("not_connected", `no ${this.providerKey} connection for user`);
     const token = await this.getAccessToken(userId);
@@ -129,6 +131,7 @@ export class NangoConnectionProvider implements ConnectionProvider {
       headers: {
         Authorization: `Bearer ${token}`,
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...opts.headers,
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });

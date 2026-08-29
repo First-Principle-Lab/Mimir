@@ -11,7 +11,7 @@ const prisma = getPrismaClient();
 export interface WatchRenewDeps {
   topic?: string;
   // Override the per-user Gmail transport (test seam). Defaults to the provider's
-  // gmailRequest — the same transport the read/send paths use.
+  // apiRequest — the same transport the read/send paths use.
   request?: (userId: string) => GmailTransport;
 }
 
@@ -23,7 +23,7 @@ export async function runWatchRenewal(deps: WatchRenewDeps = {}): Promise<number
     return 0;
   }
   const provider = gmailProvider(cfg, prisma.integrationConnection, `${cfg.PUBLIC_API_URL ?? cfg.WEB_APP_URL ?? ""}/api/v1/integrations/gmail/callback`);
-  const request = deps.request ?? ((userId: string): GmailTransport => (path, opts) => provider.gmailRequest(userId, path, opts));
+  const request = deps.request ?? ((userId: string): GmailTransport => (path, opts) => provider.apiRequest(userId, path, opts));
 
   const connections = await prisma.integrationConnection.findMany({
     where: { provider: GMAIL_INTEGRATION, status: "connected" },

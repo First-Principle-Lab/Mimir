@@ -72,8 +72,8 @@ function localizeReceived(iso: string, timezone?: string | null): string {
 
 // find-or-create the user's single persistent conversation (mirrors message.ts):
 // the chat API resolves it as the user's first conversation, so surface mail into
-// that same thread deterministically.
-async function ownerConversation(userId: string): Promise<string> {
+// that same thread deterministically. Shared by the github monitor (github-poll).
+export async function ownerConversation(userId: string): Promise<string> {
   const existing = await prisma.conversation.findFirst({
     where: { userId },
     orderBy: { createdAt: "asc" },

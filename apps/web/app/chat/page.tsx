@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentType, type SVGProps } from "react";
 import { useRouter } from "next/navigation";
-import { Mic, ArrowUp } from "lucide-react";
+import { Mic, ArrowUp, Plug } from "lucide-react";
 import { io } from "socket.io-client";
 import { SiteHeader } from "@/components/chat/site-header";
 import { Spotlight } from "@/components/chat/spotlight";
@@ -10,13 +10,30 @@ import { MovingBorderButton } from "@/components/chat/moving-border-button";
 import { Reveal, SignalDot } from "@/components/chat/motion";
 import { ThreadBubbles } from "@/components/chat/thread-bubbles";
 import { ConnectorsPanel } from "@/components/chat/connectors-panel";
-import { GmailIcon } from "@/components/landing/brand-icons";
+import { GitHubIcon, GmailIcon, GoogleCalendarIcon, LinearIcon, NotionIcon } from "@/components/landing/brand-icons";
 import type { ThreadMessage } from "@/lib/thread";
 import { cn } from "@/lib/utils";
 import { maybeNotifyDesktop } from "@/lib/push";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api/v1";
 const WS_URL = API.replace(/^http/, "ws").replace(/\/api\/v1$/, "");
+
+// Roster icons for the connectors panel; unknown keys get a generic plug so the
+// panel never renders without an icon for a new integration.
+const ROSTER_ICONS: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
+  "google-mail": GmailIcon,
+  googlecalendar: GoogleCalendarIcon,
+  github: GitHubIcon,
+  notion: NotionIcon,
+  linear: LinearIcon,
+};
+const FALLBACK_ICON = Plug;
+
+interface RosterRow {
+  key: string;
+  label: string;
+  connected: boolean;
+}
 
 type View = "loading" | "chat";
 
@@ -67,28 +84,31 @@ export default function ChatPage() {
   const [connectorsOpen, setConnectorsOpen] = useState(false);
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [gmailConnected, setGmailConnected] = useState(false);
+  const [roster, setRoster] = useState<RosterRow[]>([]);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  // Message we've already revealed. A refetch must not re-stream the same last
-  // message (that's what made replies "reparse" on every socket refetch).
+  // The latest message we've already revealed. A refetch must not re-stream the
+  // same last message (that's what made replies "reparse" on every refetch).
   const lastStreamedRef = useRef<string | null>(null);
+  // Set right before post() awaits the reply, so only a reply that arrived in
+  // THIS session gets the reveal animation. On a fresh page load the thread is
+  // already rendered — re-streaming the last message there is exactly the
+  // bug where a reload plays the whole reply again.
+  const streamNextReplyRef = useRef(false);
   const router = useRouter();
 
   const isEmpty = messages.length === 0;
 
-  const refreshGmailStatus = useCallback(async () => {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await fetch(`${API}/integrations/gmail`, {
-        credentials: "include",
-      }).catch(() => null);
-      if (res && res.ok) {
-        const data = (await res.json()) as { connected: boolean };
-        setGmailConnected(data.connected);
-        if (data.connected) return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 500));
+  // The gmail connection drives the email-draft connectable bubble; derive it
+  // from the roster fetch rather than owning a separate gmail-only status call.
+  const gmailConnected = roster.find((r) => r.key === "google-mail")?.connected ?? false;
+
+  const refreshConnectors = useCallback(async () => {
+    const res = await fetch(`${API}/integrations`, { credentials: "include" }).catch(() => null);
+    if (res && res.ok) {
+      const data = (await res.json()) as { integrations: RosterRow[] };
+      setRoster(data.integrations);
     }
   }, []);
 
@@ -104,9 +124,12 @@ export default function ChatPage() {
     const thread = data.conversation.messages.map(toThreadMessage);
     setMessages(thread);
     const last = thread[thread.length - 1];
-    if (last?.speaker === "mimir" && last.id !== lastStreamedRef.current) {
+    // Only a reply that just arrived from this session's send gets the reveal
+    // animation; a page reload shows the history as-is.
+    if (streamNextReplyRef.current && last?.speaker === "mimir" && last.id !== lastStreamedRef.current) {
       setStreamingId(last.id);
     }
+    streamNextReplyRef.current = false;
     setView("chat");
     return true;
   }, [router]);
@@ -128,8 +151,8 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (view !== "chat") return;
-    refreshGmailStatus();
-  }, [view, refreshGmailStatus]);
+    refreshConnectors();
+  }, [view, refreshConnectors]);
 
   useEffect(() => {
     textareaRef.current?.focus();
@@ -209,6 +232,8 @@ export default function ChatPage() {
           return;
         }
         if (res.ok) {
+          // This reply is the one we just asked for — let it reveal once.
+          streamNextReplyRef.current = true;
           await refreshThread();
           setThinking(false);
           return;
@@ -233,62 +258,87 @@ export default function ChatPage() {
     post(text);
   }, [draft, thinking, post]);
 
-  const connectGmail = useCallback(async () => {
-    setError(null);
-    const res = await fetch(`${API}/integrations/gmail/connect`, { method: "POST", credentials: "include" });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-      setError(body?.error?.message ?? "Couldn't start Gmail connect — try again");
-      return;
-    }
-    const { sessionToken, authorizationUrl, alreadyConnected } = (await res.json()) as {
-      sessionToken?: string;
-      authorizationUrl?: string;
-      alreadyConnected?: boolean;
-    };
-    if (alreadyConnected) {
-      refreshGmailStatus();
-      return;
-    }
-    // Composio hands back a redirect URL; Nango a session token for its in-page widget.
-    if (authorizationUrl) {
-      window.location.href = authorizationUrl;
-      return;
-    }
-    if (!sessionToken) {
-      setError("Couldn't start Gmail connect — retry later");
-      return;
-    }
-    const { default: Nango } = await import("@nangohq/frontend");
-    new Nango({ connectSessionToken: sessionToken }).openConnectUI({
-      onEvent: (event) => {
-        if (event.type === "connect") {
-          refreshGmailStatus();
-          return;
-        }
-        if (event.type === "error") {
-          // A user cancel (closed the window, denied consent at the provider) is
-          // surfaced by Nango as an error with a raw provider payload. It's not a
-          // failure — ignore it instead of flashing `{"error":"access_denied"}`.
-          const cancelled =
-            event.payload.errorType === "window_closed" ||
-            /access_denied/i.test(event.payload.errorMessage);
-          if (!cancelled) setError("Gmail connect didn't complete — try again");
-        }
-      },
-    });
-  }, [refreshGmailStatus]);
+  const connectByKey = useCallback(
+    async (key: string) => {
+      setError(null);
+      const label = roster.find((r) => r.key === key)?.label ?? key;
+      const res = await fetch(`${API}/integrations/${key}/connect`, { method: "POST", credentials: "include" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+        setError(body?.error?.message ?? `Couldn't start ${label} connect — try again`);
+        return;
+      }
+      const { sessionToken, authorizationUrl, alreadyConnected } = (await res.json()) as {
+        sessionToken?: string;
+        authorizationUrl?: string;
+        alreadyConnected?: boolean;
+      };
+      if (alreadyConnected) {
+        void refreshConnectors();
+        return;
+      }
+      // Composio hands back a redirect URL; Nango a session token for its in-page widget.
+      if (authorizationUrl) {
+        window.location.href = authorizationUrl;
+        return;
+      }
+      if (!sessionToken) {
+        setError(`Couldn't start ${label} connect — retry later`);
+        return;
+      }
+      const { default: Nango } = await import("@nangohq/frontend");
+      new Nango({ connectSessionToken: sessionToken }).openConnectUI({
+        onEvent: (event) => {
+          if (event.type === "connect") {
+            void refreshConnectors();
+            return;
+          }
+          if (event.type === "error") {
+            // A user cancel (closed the window, denied consent at the provider) is
+            // surfaced by Nango as an error with a raw provider payload. It's not a
+            // failure — ignore it instead of flashing `{"error":"access_denied"}`.
+            const cancelled =
+              event.payload.errorType === "window_closed" ||
+              /access_denied/i.test(event.payload.errorMessage);
+            if (!cancelled) setError(`${label} connect didn't complete — try again`);
+          }
+        },
+      });
+    },
+    [roster, refreshConnectors],
+  );
 
-  const disconnectGmail = useCallback(async () => {
-    setError(null);
-    const res = await fetch(`${API}/integrations/gmail/disconnect`, { method: "POST", credentials: "include" });
-    if (!res.ok) {
-      setError("Couldn't disconnect Gmail — try again");
-      return;
-    }
-    setGmailConnected(false);
-    void refreshGmailStatus();
-  }, [refreshGmailStatus]);
+  // The ConnectorsPanel hands us a display name; resolve it back to the key the
+  // API expects (keys like "google-mail" are not what the UI shows).
+  const connect = useCallback(
+    async (name: string) => {
+      const row = roster.find((r) => r.label === name);
+      if (row) await connectByKey(row.key);
+    },
+    [roster, connectByKey],
+  );
+
+  const disconnectByKey = useCallback(
+    async (key: string) => {
+      setError(null);
+      const label = roster.find((r) => r.key === key)?.label ?? key;
+      const res = await fetch(`${API}/integrations/${key}/disconnect`, { method: "POST", credentials: "include" });
+      if (!res.ok) {
+        setError(`Couldn't disconnect ${label} — try again`);
+        return;
+      }
+      void refreshConnectors();
+    },
+    [roster, refreshConnectors],
+  );
+
+  const disconnect = useCallback(
+    async (name: string) => {
+      const row = roster.find((r) => r.label === name);
+      if (row) await disconnectByKey(row.key);
+    },
+    [roster, disconnectByKey],
+  );
 
   const logout = useCallback(async () => {
     await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
@@ -297,7 +347,10 @@ export default function ChatPage() {
     router.replace("/login");
   }, [router]);
 
-  const connectors = [{ name: "Gmail", icon: GmailIcon, connected: gmailConnected }];
+  const connectors = roster.map((r) => {
+    const Icon = ROSTER_ICONS[r.key] ?? FALLBACK_ICON;
+    return { name: r.label, icon: Icon, connected: r.connected };
+  });
   const watching = connectors.filter((c) => c.connected).map((c) => c.name);
 
   if (view === "loading") {
@@ -310,18 +363,14 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
-      <SiteHeader
-        watching={watching}
-        onOpenConnectors={() => setConnectorsOpen(true)}
-        onLogout={logout}
-      />
+      <SiteHeader watching={watching} onOpenConnectors={() => setConnectorsOpen(true)} onLogout={logout} />
 
       <ConnectorsPanel
         open={connectorsOpen}
         onClose={() => setConnectorsOpen(false)}
         items={connectors}
-        onConnect={connectGmail}
-        onDisconnect={disconnectGmail}
+        onConnect={(name) => void connect(name)}
+        onDisconnect={(name) => void disconnect(name)}
         onLogout={logout}
       />
 
@@ -341,7 +390,7 @@ export default function ChatPage() {
                 setStreamingId(null);
               }}
               onAction={(id, action) => post(action)}
-              onConnect={connectGmail}
+              onConnect={() => void connectByKey("google-mail")}
             />
 
             <div className="flex items-center gap-2 pt-6">

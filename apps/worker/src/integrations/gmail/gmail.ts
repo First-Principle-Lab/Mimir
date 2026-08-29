@@ -1,15 +1,16 @@
 import { getConfig, getPrismaClient } from "@mimir/backend-core";
 import { ConnectionError, ProviderError, gmailProvider } from "@mimir/connection-provider";
-import type { GmailRequestOptions, GmailRequestResult } from "@mimir/connection-provider";
+import type { ApiRequestOptions, ApiRequestResult } from "@mimir/connection-provider";
 import { ToolError, type Task } from "@mimir/tasks";
 import { z } from "zod";
+import { rpc } from "../http-rpc.js";
 
 const prisma = getPrismaClient();
 
-// The Gmail API transport. The ConnectionProvider's gmailRequest feeds this:
+// The Gmail API transport. The ConnectionProvider's apiRequest feeds this:
 // Nango injects the token client-side, Composio injects it server-side (proxy
 // execute). The REST layer never sees a credential — it only races status + body.
-export type GmailTransport = (path: string, opts?: GmailRequestOptions) => Promise<GmailRequestResult>;
+export type GmailTransport = (path: string, opts?: ApiRequestOptions) => Promise<ApiRequestResult>;
 
 export interface GmailMessage {
   id: string;
@@ -38,7 +39,7 @@ export async function fetchEntityData(userId: string, entity: string | null, tas
   }
   const cfg = getConfig();
   const provider = gmailProvider(cfg, prisma.integrationConnection, `${cfg.PUBLIC_API_URL ?? cfg.WEB_APP_URL ?? ""}/api/v1/integrations/gmail/callback`);
-  const transport: GmailTransport = (path, opts) => provider.gmailRequest(userId, path, opts);
+  const transport: GmailTransport = (path, opts) => provider.apiRequest(userId, path, opts);
   return { provider: "gmail", messages: await fetchGmailMessages(transport) };
 }
 
@@ -52,7 +53,7 @@ export interface FetchGmailOptions {
 // Split from fetchEntityData so the REST layer is unit-testable with a mocked
 // transport — no live Nango/Composio/Google account required.
 export async function fetchGmailMessages(transport: GmailTransport, opts: FetchGmailOptions = {}): Promise<GmailMessage[]> {
-  const list = await gmailRpc<GmailListResponse>(transport, "/gmail/v1/users/me/messages", {
+  const list = await rpc<GmailListResponse>(transport, "/gmail/v1/users/me/messages", {
     query: {
       maxResults: opts.maxResults ?? 10,
       ...(opts.query ? { q: opts.query } : {}),
@@ -60,7 +61,7 @@ export async function fetchGmailMessages(transport: GmailTransport, opts: FetchG
   });
   const messages: GmailMessage[] = [];
   for (const row of list.messages ?? []) {
-    const detail = await gmailRpc<GmailDetailResponse>(transport, `/gmail/v1/users/me/messages/${row.id}`, {
+    const detail = await rpc<GmailDetailResponse>(transport, `/gmail/v1/users/me/messages/${row.id}`, {
       query: { format: "metadata" },
     });
     const listUnsubscribe = headerValue(detail.payload, "List-Unsubscribe");
@@ -95,7 +96,7 @@ export function gmailSearchTask(): Task {
       if (!query?.trim()) throw new ToolError("validation", "search_email requires a query");
       const cfg = getConfig();
       const provider = gmailProvider(cfg, prisma.integrationConnection, `${cfg.PUBLIC_API_URL ?? cfg.WEB_APP_URL ?? ""}/api/v1/integrations/gmail/callback`);
-      const transport: GmailTransport = (path, opts) => provider.gmailRequest(ctx.userId, path, opts);
+      const transport: GmailTransport = (path, opts) => provider.apiRequest(ctx.userId, path, opts);
       try {
         return { provider: "gmail", query, messages: await fetchGmailMessages(transport, { query, maxResults: 20 }) };
       } catch (e) {
@@ -117,7 +118,7 @@ export interface GmailWatchResult {
 // against the shared topic. Gmail expiring the watch (~7 days) is handled by the
 // renewal sweep.
 export async function registerGmailWatch(transport: GmailTransport, topicName: string): Promise<GmailWatchResult> {
-  const watch = await gmailRpc<{ expiration?: number; historyId?: string }>(transport, "/gmail/v1/users/me/watch", {
+  const watch = await rpc<{ expiration?: number; historyId?: string }>(transport, "/gmail/v1/users/me/watch", {
     method: "POST",
     body: { topicName, labelIds: ["INBOX"], labelFilterBehavior: "INCLUDE" },
   });
@@ -136,13 +137,13 @@ export interface GmailDraftMessage {
 // Gmail draft at proposal time so a cancel leaves it sitting in the user's
 // Drafts folder; confirming sends that exact draft via drafts/send.
 export async function getGmailProfile(transport: GmailTransport): Promise<string> {
-  const profile = await gmailRpc<{ emailAddress?: string }>(transport, "/gmail/v1/users/me/profile");
+  const profile = await rpc<{ emailAddress?: string }>(transport, "/gmail/v1/users/me/profile");
   if (!profile.emailAddress) throw new ProviderError("malformed_response", "gmail profile missing emailAddress");
   return profile.emailAddress;
 }
 
 export async function createGmailDraft(transport: GmailTransport, msg: GmailDraftMessage): Promise<{ id: string; messageId: string }> {
-  const draft = await gmailRpc<{ id?: string; message?: { id?: string } }>(transport, "/gmail/v1/users/me/drafts", {
+  const draft = await rpc<{ id?: string; message?: { id?: string } }>(transport, "/gmail/v1/users/me/drafts", {
     method: "POST",
     body: { message: { raw: Buffer.from(buildRawMessage(msg), "utf8").toString("base64url") } },
   });
@@ -151,7 +152,7 @@ export async function createGmailDraft(transport: GmailTransport, msg: GmailDraf
 }
 
 export async function sendGmailDraft(transport: GmailTransport, draftId: string): Promise<string> {
-  const sent = await gmailRpc<{ id?: string }>(transport, "/gmail/v1/users/me/drafts/send", {
+  const sent = await rpc<{ id?: string }>(transport, "/gmail/v1/users/me/drafts/send", {
     method: "POST",
     body: { id: draftId },
   });
@@ -163,7 +164,7 @@ export async function sendGmailDraft(transport: GmailTransport, draftId: string)
 // repeated corrections don't pile up orphaned copies. Gmail returns 204 with an
 // empty body on delete.
 export async function deleteGmailDraft(transport: GmailTransport, draftId: string): Promise<void> {
-  await gmailRpc<undefined>(transport, `/gmail/v1/users/me/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" });
+  await rpc<undefined>(transport, `/gmail/v1/users/me/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" });
 }
 
 // RFC 2822 raw message for Gmail. Subject uses RFC 2047 B-encoding when it
@@ -183,27 +184,6 @@ export function buildRawMessage(msg: GmailDraftMessage): string {
 
 function encodeSubject(subject: string): string {
   return /^[\x20-\x7e]*$/.test(subject) ? subject : `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`;
-}
-
-// HTTP error mapping. ConnectionError is fail-fast (reconnect, no retry);
-// ProviderError is rethrown into BullMQ's attempts:5 backoff. Shared by every
-// Gmail REST call, fed from the provider transport's { status, data } — identical
-// for Nango and Composio.
-interface GmailRpcOptions {
-  method?: string;
-  body?: unknown;
-  query?: Record<string, string | number | string[]>;
-}
-
-async function gmailRpc<T>(transport: GmailTransport, path: string, opts: GmailRpcOptions = {}): Promise<T> {
-  const res = await transport(path, opts);
-  if (res.status === 401 || res.status === 403) throw new ConnectionError("expired", "gmail access token rejected");
-  if (res.status === 429) throw new ProviderError("rate_limited", "gmail rate limited");
-  if (res.status === 400) throw new ProviderError("validation_failed", "gmail rejected request");
-  if (res.status === 204) return undefined as T;
-  if (res.status >= 500) throw new ProviderError("provider_down", `gmail api ${res.status}`);
-  if (res.status < 200 || res.status >= 300) throw new Error(`gmail api returned ${res.status}`);
-  return res.data as T;
 }
 
 interface GmailListResponse {

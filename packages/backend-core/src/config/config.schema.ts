@@ -19,6 +19,12 @@ export const configSchema = z.object({
   // Composio auth config id for the Gmail toolkit (an auth config is required
   // to reach a connected account's token). Falls back to managed Gmail if unset.
   COMPOSIO_GMAIL_AUTH_CONFIG: z.string().min(1).optional(),
+  // Per-toolkit auth config ids for the other Composio-backed roster
+  // integrations (5.6-5.8). Absent => that integration's connect returns
+  // 502 NOT_CONFIGURED instead of minting an OAuth link.
+  COMPOSIO_CALENDAR_AUTH_CONFIG: z.string().min(1).optional(),
+  COMPOSIO_GITHUB_AUTH_CONFIG: z.string().min(1).optional(),
+  COMPOSIO_NOTION_AUTH_CONFIG: z.string().min(1).optional(),
   BROWSERBASE_API_KEY: z.string().min(1).optional(),
   BROWSERBASE_PROJECT_ID: z.string().min(1).optional(),
   // Empty (or unset) = allow all; set to a comma-separated list to restrict.
@@ -40,13 +46,17 @@ export const configSchema = z.object({
   GOOGLE_WATCH_CLIENT_EMAIL: z.string().min(1).optional(),
   GOOGLE_WATCH_PRIVATE_KEY: z.string().min(1).optional(),
   GOOGLE_PUBSUB_TOPIC: z.string().min(1).optional(),
-  // Connection-canary: a user whose Gmail connection gmailRequest() is
+  // Connection-canary: a user whose Gmail connection apiRequest() is
   // exercised daily to detect a silent break in the provider's proxy
   // transport. Skipped when unset.
   CONNECTION_CANARY_USER_ID: z.string().min(1).optional(),
   // Mail poll — fixed-cadence inbox sweep. Env override keeps the cost/latency
   // tradeoff tunable without a redeploy (default: every minute).
   MAIL_POLL_CRON: z.string().default("* * * * *"),
+  // GitHub poll — fixed-cadence open-issues sweep (5.7.3). Slower than the
+  // mail poll by default: github issues change rarely, and each sweep is N
+  // REST calls per repo; 15-min keeps LLM triage cost bounded.
+  GITHUB_POLL_CRON: z.string().default("*/15 * * * *"),
   FACT_DARK_LAUNCH: z.coerce.boolean().default(false),
   FACT_SWEEP_CRON: z.string().default("0 * * * *"),
   // Web Push: VAPID keys. Absent => push delivery is disabled and events

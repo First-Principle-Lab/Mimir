@@ -3,6 +3,7 @@ import {
   scheduleConnectionCanary,
   scheduleDormancySweep,
   scheduleFactExtractionSweep,
+  scheduleGithubPollSweep,
   scheduleMailPollSweep,
   scheduleTriggerTick,
   scheduleWatchRenewal,
@@ -20,6 +21,9 @@ void scheduleDormancySweep().catch((e) =>
 );
 void scheduleMailPollSweep().catch((e) =>
   getLogger().error({ err: e }, "failed to schedule mail poll sweep"),
+);
+void scheduleGithubPollSweep().catch((e) =>
+  getLogger().error({ err: e }, "failed to schedule github poll sweep"),
 );
 void scheduleTriggerTick().catch((e) =>
   getLogger().error({ err: e }, "failed to schedule trigger tick"),
