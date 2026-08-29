@@ -15,7 +15,9 @@ const components: Components = {
   ol: ({ children }) => (
     <ol className="my-1.5 list-decimal space-y-1 pl-5 marker:text-muted-foreground">{children}</ol>
   ),
-  li: ({ children }) => <li>{children}</li>,
+  li: ({ children, className, style }) => (
+    <li className={className} style={style}>{children}</li>
+  ),
   h1: ({ children }) => (
     <h1 className="my-2 text-lg font-semibold first:mt-0 last:mb-0">{children}</h1>
   ),
@@ -135,7 +137,21 @@ function wordStreamPlugin(active: boolean, wordDelay: number) {
         delete node.value;
       } else if (node.children) {
         const childInCode = inCode || node.tagName === "code" || node.tagName === "pre";
-        for (const child of node.children) visit(child, childInCode);
+        if (node.tagName === "li") {
+          // Sync the list marker (bullet/number) to the first streamed word so
+          // the dot fades in together with the text instead of ahead of it.
+          const startIndex = index;
+          for (const child of node.children) visit(child, childInCode);
+          if (startIndex !== index) {
+            node.properties = {
+              ...node.properties,
+              className: "md-li",
+              style: `animation-delay: ${startIndex * wordDelay}ms`,
+            };
+          }
+        } else {
+          for (const child of node.children) visit(child, childInCode);
+        }
       }
     };
     visit(tree, false);
