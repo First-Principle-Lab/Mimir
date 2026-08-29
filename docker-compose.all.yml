@@ -1,0 +1,31 @@
+# Mimir in one container: web + api + worker + postgres(pgvector) + redis.
+# Requires OPENROUTER_API_KEY and JWT_SECRET to be useful; both also core
+# integration keys (Composio/Nango) if you connect anything.
+#
+#   docker compose -f docker-compose.all.yml up --build
+services:
+  mimir:
+    build:
+      context: .
+      dockerfile: docker/all/Dockerfile
+    image: mimir:all
+    ports:
+      - "80:80"
+      - "4000:4000"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
+      # Defaults needed to be useful out of the box:
+      # DATABASE_URL / REDIS_URL / POSTGRES_* / WEB_APP_URL
+    volumes:
+      - mimir-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+volumes:
+  mimir-pgdata:

@@ -47,3 +47,18 @@ docker build -f apps/web/Dockerfile .     # -> nginx static image
 
 `apps/desktop` deliberately has no Dockerfile — it's a native artifact (Tauri shell, Phase 9),
 excluded from the k8s "same images, new manifests" guarantee.
+
+### Single container (everything in one)
+
+For a self-contained bring-up — web + api + worker + postgres (pgvector) + redis in one image,
+with the entrypoint bootstrapping the DB, applying migrations, and supervising the apps:
+
+```sh
+docker compose -f docker-compose.all.yml up --build
+# or: docker build -f docker/all/Dockerfile -t mimir:all .
+```
+
+Requires `JWT_SECRET` (and `OPENROUTER_API_KEY`/Composio/Nango keys to actually serve or
+connect anything). Web on :80, api on :4000; postgres data persists on the `mimir-pgdata`
+volume. Good for local/dev/self-host — not for scale (a single postgres instance alongside
+the app).

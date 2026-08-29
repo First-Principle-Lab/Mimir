@@ -13,6 +13,7 @@ coverage
 .turbo
 .vercel
 implementation-plan-final.md
-scripts
 docker-compose.yml
 README.md
+# Note: scripts/ is intentionally NOT ignored — docker/all (single container)
+# runs scripts/migrate.ts at boot. The per-app Dockerfiles prune it away anyway.
