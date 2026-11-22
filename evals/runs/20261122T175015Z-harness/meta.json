@@ -1,0 +1,14 @@
+{
+  "topic": "phase 2 inbox completion review",
+  "suite": "harness",
+  "status": "failed",
+  "exitCode": 1,
+  "testedCommit": "72e02f578c46020f03ca065175759ec47571a55e",
+  "testedRef": "feat/phase-2-inbox",
+  "branch": "eval/2026-11-22-harness-phase-2-inbox-completion-review",
+  "runId": "20261122T175015Z-harness",
+  "startedAt": "2026-11-22T17:50:16Z",
+  "finishedAt": "2026-11-22T17:53:56Z",
+  "runner": "local",
+  "runUrl": null
+}

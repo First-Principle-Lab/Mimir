@@ -1,0 +1,138 @@
+$ bun scripts/eval-harness.ts && bun scripts/eval-inbox.ts
+{"level":30,"time":1795369817225,"pid":478036,"hostname":"omarchy","userId":"harness-eval-82c477fc-004c-4837-8280-6913fd29996b","socketId":"dJsLv1bD1s-4cIHuAAAB","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369817275,"pid":478036,"hostname":"omarchy","conversationId":"7995efa3-9177-41d0-95b1-1cc5b31870fc","messageId":"d1f0c624-277e-46d7-a5a5-ce38363b1402","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369819978,"pid":478036,"hostname":"omarchy","conversationId":"7995efa3-9177-41d0-95b1-1cc5b31870fc","runId":"f98a6fef-4815-4968-8ee5-de860fffb45c","promptTokens":3079,"completionTokens":3,"costUsd":0.00043175,"steps":1,"toolCalls":0,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":1640,"msg":"harness run settled"}
+{"level":30,"time":1795369819991,"pid":478036,"hostname":"omarchy","conversationId":"7995efa3-9177-41d0-95b1-1cc5b31870fc","clientMessageId":"bd7abfd9-6ff1-40db-ae1b-e425b3c5e089","answered":true,"msg":"user message replayed (idempotent hit)"}
+PASS direct-answer
+{"level":30,"time":1795369820006,"pid":478036,"hostname":"omarchy","userId":"harness-eval-82c477fc-004c-4837-8280-6913fd29996b","socketId":"dJsLv1bD1s-4cIHuAAAB","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369820027,"pid":478036,"hostname":"omarchy","userId":"harness-eval-299dbcda-d4d9-467a-a531-83479bc41d2d","socketId":"DFQUy1QXMWYOuvJhAAAD","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369820063,"pid":478036,"hostname":"omarchy","conversationId":"412cdd57-670f-47f8-bb4e-f756ac977b81","messageId":"e5f3267b-5cb8-4791-8006-fae3381ccd4c","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369826859,"pid":478036,"hostname":"omarchy","conversationId":"412cdd57-670f-47f8-bb4e-f756ac977b81","runId":"c0214701-7208-4d74-bda8-2eef655fee8b","promptTokens":6921,"completionTokens":232,"costUsd":0.00051695,"steps":2,"toolCalls":2,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":5731,"msg":"harness run settled"}
+{"level":30,"time":1795369826866,"pid":478036,"hostname":"omarchy","conversationId":"412cdd57-670f-47f8-bb4e-f756ac977b81","clientMessageId":"bbceaaab-baed-4cb3-805d-9200e008c4a3","answered":true,"msg":"user message replayed (idempotent hit)"}
+PASS combined-request
+{"level":30,"time":1795369826878,"pid":478036,"hostname":"omarchy","userId":"harness-eval-299dbcda-d4d9-467a-a531-83479bc41d2d","socketId":"DFQUy1QXMWYOuvJhAAAD","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369826894,"pid":478036,"hostname":"omarchy","userId":"harness-eval-abd664e2-e78d-44ff-b287-cab89dcf2d15","socketId":"BLTop98EJUHsO5mbAAAF","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369826926,"pid":478036,"hostname":"omarchy","conversationId":"738de73b-2300-4636-a81a-2faf572915f0","messageId":"85c7f96b-7917-41c8-aba9-4061a70eb409","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369831602,"pid":478036,"hostname":"omarchy","conversationId":"738de73b-2300-4636-a81a-2faf572915f0","runId":"a452a062-d4ed-4fad-bbfb-77ebfbf135ee","promptTokens":6797,"completionTokens":126,"costUsd":0.00049343,"steps":2,"toolCalls":1,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":3614,"msg":"harness run settled"}
+{"level":30,"time":1795369831608,"pid":478036,"hostname":"omarchy","conversationId":"738de73b-2300-4636-a81a-2faf572915f0","clientMessageId":"65c648e2-45c4-43ac-920c-d60c6fab9d51","answered":true,"msg":"user message replayed (idempotent hit)"}
+PASS hedged-calendar
+{"level":30,"time":1795369831618,"pid":478036,"hostname":"omarchy","userId":"harness-eval-abd664e2-e78d-44ff-b287-cab89dcf2d15","socketId":"BLTop98EJUHsO5mbAAAF","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369831634,"pid":478036,"hostname":"omarchy","userId":"harness-eval-24d0cd04-47e2-49cf-8d46-8b1b573a66f4","socketId":"P15GnKjGj245fpqSAAAH","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369831667,"pid":478036,"hostname":"omarchy","conversationId":"a00fa1e6-c50d-44f5-b06f-e2b45204ecfe","messageId":"1d076d47-da4a-4caa-90ad-389191a95f93","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369835725,"pid":478036,"hostname":"omarchy","conversationId":"a00fa1e6-c50d-44f5-b06f-e2b45204ecfe","runId":"4772bd10-fedb-4cde-a943-47951b5a4c4d","promptTokens":3453,"completionTokens":137,"costUsd":0.00055506,"steps":2,"toolCalls":1,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":2991,"msg":"harness run settled"}
+{"level":30,"time":1795369835731,"pid":478036,"hostname":"omarchy","conversationId":"a00fa1e6-c50d-44f5-b06f-e2b45204ecfe","clientMessageId":"1105641d-330f-44f0-a84e-e3f154036a57","answered":true,"msg":"user message replayed (idempotent hit)"}
+PASS local-midnight
+{"level":30,"time":1795369835742,"pid":478036,"hostname":"omarchy","userId":"harness-eval-24d0cd04-47e2-49cf-8d46-8b1b573a66f4","socketId":"P15GnKjGj245fpqSAAAH","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369835757,"pid":478036,"hostname":"omarchy","userId":"harness-eval-3372ca31-0d29-40d9-9383-44f0e9037fdc","socketId":"e7b8494FQiaV1TCBAAAJ","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369835789,"pid":478036,"hostname":"omarchy","conversationId":"c4817346-2502-4491-87d8-96f392885205","messageId":"957c3191-fd3f-49b1-8f4b-872f0fc064ca","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369838306,"pid":478036,"hostname":"omarchy","conversationId":"c4817346-2502-4491-87d8-96f392885205","runId":"adfd3e67-069e-4390-b5a0-02e2ab4bcb22","promptTokens":3296,"completionTokens":23,"costUsd":0.00023394,"steps":1,"toolCalls":0,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":1436,"msg":"harness run settled"}
+{"level":30,"time":1795369838312,"pid":478036,"hostname":"omarchy","conversationId":"c4817346-2502-4491-87d8-96f392885205","clientMessageId":"61dfa54a-2b83-4469-9241-489de43a5837","answered":true,"msg":"user message replayed (idempotent hit)"}
+PASS weekday
+{"level":30,"time":1795369838326,"pid":478036,"hostname":"omarchy","userId":"harness-eval-3372ca31-0d29-40d9-9383-44f0e9037fdc","socketId":"e7b8494FQiaV1TCBAAAJ","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369838342,"pid":478036,"hostname":"omarchy","userId":"harness-eval-a694db99-ca8c-4eac-a786-18958f90aab7","socketId":"pbCkTkJsY2H8xE48AAAL","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369838374,"pid":478036,"hostname":"omarchy","conversationId":"3b97fedf-b4d7-49a3-a76b-f2cf022fcb87","messageId":"97fb9e4a-ba83-4adb-82a1-7d3ecebbb17f","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369841519,"pid":478036,"hostname":"omarchy","conversationId":"3b97fedf-b4d7-49a3-a76b-f2cf022fcb87","runId":"75484884-acd7-470d-b5c2-6aebb7e81344","promptTokens":226,"completionTokens":93,"costUsd":0.0000884,"steps":1,"toolCalls":0,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":2033,"msg":"harness run settled"}
+{"level":30,"time":1795369841526,"pid":478036,"hostname":"omarchy","conversationId":"3b97fedf-b4d7-49a3-a76b-f2cf022fcb87","clientMessageId":"3062016a-fd2b-4d67-a83a-0bb1c590c2c2","answered":true,"msg":"user message replayed (idempotent hit)"}
+PASS write-refusal
+{"level":30,"time":1795369841537,"pid":478036,"hostname":"omarchy","userId":"harness-eval-a694db99-ca8c-4eac-a786-18958f90aab7","socketId":"pbCkTkJsY2H8xE48AAAL","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369841552,"pid":478036,"hostname":"omarchy","userId":"harness-eval-322793af-664c-4b75-af88-c6534853d742","socketId":"4yrl4yc_YlZ73aJaAAAN","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369841585,"pid":478036,"hostname":"omarchy","conversationId":"8cadefa1-ae07-42b8-bf66-76e09d24a52e","messageId":"67d196fd-8c32-445b-bcff-5ea442fa2add","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369849903,"pid":478036,"hostname":"omarchy","conversationId":"8cadefa1-ae07-42b8-bf66-76e09d24a52e","runId":"181ad3a3-6b60-44e4-96e0-263fd19ed707","promptTokens":1171,"completionTokens":191,"costUsd":0.0003147,"steps":3,"toolCalls":3,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":7186,"msg":"harness run settled"}
+{"level":30,"time":1795369849909,"pid":478036,"hostname":"omarchy","conversationId":"8cadefa1-ae07-42b8-bf66-76e09d24a52e","clientMessageId":"37431873-6e96-4126-a552-20f89bf7fd40","answered":true,"msg":"user message replayed (idempotent hit)"}
+PASS deferred-tool
+{"level":30,"time":1795369849919,"pid":478036,"hostname":"omarchy","userId":"harness-eval-322793af-664c-4b75-af88-c6534853d742","socketId":"4yrl4yc_YlZ73aJaAAAN","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369849934,"pid":478036,"hostname":"omarchy","userId":"harness-eval-9c21c83e-4a97-43bb-9d20-1d47fac5c840","socketId":"6pr1mUzSD_OipbLzAAAP","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369849966,"pid":478036,"hostname":"omarchy","conversationId":"d86e3c7d-67a1-4c9a-b3bc-dbb5e2839317","messageId":"32a48471-6a21-47c8-ae57-7861f80d0ebe","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369854648,"pid":478036,"hostname":"omarchy","conversationId":"d86e3c7d-67a1-4c9a-b3bc-dbb5e2839317","runId":"8239ad0f-6b80-47c9-8ed6-2a755c75c632","promptTokens":383,"completionTokens":137,"costUsd":0.00015598,"steps":2,"toolCalls":1,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":3556,"msg":"harness run settled"}
+{"level":30,"time":1795369854654,"pid":478036,"hostname":"omarchy","conversationId":"d86e3c7d-67a1-4c9a-b3bc-dbb5e2839317","clientMessageId":"5814fa11-68e4-4292-8766-dd894618dd77","answered":true,"msg":"user message replayed (idempotent hit)"}
+PASS dst-day
+{"level":30,"time":1795369854663,"pid":478036,"hostname":"omarchy","userId":"harness-eval-9c21c83e-4a97-43bb-9d20-1d47fac5c840","socketId":"6pr1mUzSD_OipbLzAAAP","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369854678,"pid":478036,"hostname":"omarchy","userId":"harness-eval-2bf90143-6f38-4038-8f47-f8bc345564c6","socketId":"gCQznebTmi7b8yE4AAAR","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369854709,"pid":478036,"hostname":"omarchy","conversationId":"d2530a66-9b5e-40bf-a82b-47e5e50500c2","messageId":"e01132a1-c518-420d-be90-1b117cb89161","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369857111,"pid":478036,"hostname":"omarchy","conversationId":"d2530a66-9b5e-40bf-a82b-47e5e50500c2","runId":"067af453-c225-4d09-a7b4-5d83f1ac06c7","promptTokens":3077,"completionTokens":14,"costUsd":0.0001405111,"steps":1,"toolCalls":0,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":1274,"msg":"harness run settled"}
+{"level":30,"time":1795369857117,"pid":478036,"hostname":"omarchy","conversationId":"d2530a66-9b5e-40bf-a82b-47e5e50500c2","clientMessageId":"b84bd49c-b38c-468c-8dc9-3c43a2fd5b04","answered":true,"msg":"user message replayed (idempotent hit)"}
+PASS invalid-timezone
+{"level":30,"time":1795369857126,"pid":478036,"hostname":"omarchy","userId":"harness-eval-2bf90143-6f38-4038-8f47-f8bc345564c6","socketId":"gCQznebTmi7b8yE4AAAR","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369857139,"pid":478036,"hostname":"omarchy","userId":"harness-eval-183ab4e8-2587-4bef-b68f-2c258f465d79","socketId":"GWsCTu1JDt19Tw8SAAAT","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369857170,"pid":478036,"hostname":"omarchy","conversationId":"1c282e25-1560-45a4-9f0a-634dc899bb36","messageId":"62b5b60f-dca9-4c78-bc82-a0144f42e2de","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369861619,"pid":478036,"hostname":"omarchy","conversationId":"1c282e25-1560-45a4-9f0a-634dc899bb36","runId":"e2c00d3b-5311-4ea8-b694-1fa4d701e959","promptTokens":669,"completionTokens":149,"costUsd":0.00019682,"steps":2,"toolCalls":1,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":3366,"msg":"harness run settled"}
+{"level":30,"time":1795369861625,"pid":478036,"hostname":"omarchy","conversationId":"1c282e25-1560-45a4-9f0a-634dc899bb36","clientMessageId":"c9fc0755-0912-4291-bb1b-80bf6011994a","answered":true,"msg":"user message replayed (idempotent hit)"}
+PASS calendar-write-refusal
+{"level":30,"time":1795369861634,"pid":478036,"hostname":"omarchy","userId":"harness-eval-183ab4e8-2587-4bef-b68f-2c258f465d79","socketId":"GWsCTu1JDt19Tw8SAAAT","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369861649,"pid":478036,"hostname":"omarchy","userId":"harness-eval-76614c28-6fbc-4865-9ca8-dae5bb6b8e09","socketId":"hC4qhiszv2d85To5AAAV","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369861680,"pid":478036,"hostname":"omarchy","conversationId":"17050330-be13-435e-9a07-738c2749a83a","messageId":"71df6dec-1564-4ad7-acf8-a05259cc03e7","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369863817,"pid":478036,"hostname":"omarchy","conversationId":"17050330-be13-435e-9a07-738c2749a83a","runId":"6eefe677-44af-478d-877e-28fbfa006176","promptTokens":3097,"completionTokens":2,"costUsd":0.0001377971,"steps":1,"toolCalls":0,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":1023,"msg":"harness run settled"}
+{"level":30,"time":1795369863831,"pid":478036,"hostname":"omarchy","conversationId":"17050330-be13-435e-9a07-738c2749a83a","messageId":"493014a0-b1e2-4472-a5d4-116e5f10c1c8","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369866429,"pid":478036,"hostname":"omarchy","conversationId":"17050330-be13-435e-9a07-738c2749a83a","runId":"2fdf2c88-1380-48dc-bcad-41e96120043f","promptTokens":3324,"completionTokens":4,"costUsd":0.00023324,"steps":1,"toolCalls":0,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":1523,"msg":"harness run settled"}
+{"level":30,"time":1795369866434,"pid":478036,"hostname":"omarchy","conversationId":"17050330-be13-435e-9a07-738c2749a83a","clientMessageId":"be2f0140-de85-4b69-81e5-dc27415a3d62","answered":true,"msg":"user message replayed (idempotent hit)"}
+PASS session-rehydration
+{"level":30,"time":1795369866444,"pid":478036,"hostname":"omarchy","userId":"harness-eval-76614c28-6fbc-4865-9ca8-dae5bb6b8e09","socketId":"hC4qhiszv2d85To5AAAV","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369866463,"pid":478036,"hostname":"omarchy","userId":"harness-eval-8b3bce27-232c-4a0d-8074-f29f25aa2555","socketId":"5PzgHzBmZ9ZDTFIBAAAX","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369866495,"pid":478036,"hostname":"omarchy","conversationId":"4ef11a8c-abab-4d30-a96b-f7c7d0eb6598","messageId":"104d007c-a7dc-456d-b63d-1ac34a3254ed","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369868689,"pid":478036,"hostname":"omarchy","conversationId":"4ef11a8c-abab-4d30-a96b-f7c7d0eb6598","runId":"bd87d0df-be21-4d29-b2c5-c7727704bf02","promptTokens":270,"completionTokens":5,"costUsd":0.000112021,"steps":1,"toolCalls":0,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":1064,"msg":"harness run settled"}
+{"level":30,"time":1795369868694,"pid":478036,"hostname":"omarchy","conversationId":"4ef11a8c-abab-4d30-a96b-f7c7d0eb6598","clientMessageId":"c2dc267c-6141-4007-8f52-319b1eda8a54","answered":true,"msg":"user message replayed (idempotent hit)"}
+PASS legacy-history
+{"level":30,"time":1795369868703,"pid":478036,"hostname":"omarchy","userId":"harness-eval-8b3bce27-232c-4a0d-8074-f29f25aa2555","socketId":"5PzgHzBmZ9ZDTFIBAAAX","open":0,"msg":"socket disconnected"}
+Harness: 12/12 passed (real model, HTTP → BullMQ → Postgres → socket; synthetic accounts).
+{"level":30,"time":1795369869818,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-4a242ab8-7650-4e08-8314-cec2919334c5","socketId":"9IsvkZ1tOYRBA7GaAAAB","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369869868,"pid":478035,"hostname":"omarchy","conversationId":"d9ffb57e-bd34-41f0-81a8-45e79bf27109","messageId":"87dc3815-c46e-4e2a-8e13-5587da55ece1","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369869996,"pid":478035,"hostname":"omarchy","conversationId":"d9ffb57e-bd34-41f0-81a8-45e79bf27109","messageId":"8f6da44e-cda6-414b-a85b-e341ea0d940f","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369872389,"pid":478035,"hostname":"omarchy","conversationId":"d9ffb57e-bd34-41f0-81a8-45e79bf27109","runId":"dda76b60-ef84-4c2a-bbd7-a6c331a5f996","promptTokens":1765,"completionTokens":6,"costUsd":0.00026158,"steps":1,"toolCalls":0,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":1322,"msg":"harness run settled"}
+PASS message-burst
+{"level":30,"time":1795369873142,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-4a242ab8-7650-4e08-8314-cec2919334c5","socketId":"9IsvkZ1tOYRBA7GaAAAB","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369873156,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-74e0ce12-7870-4088-8925-7584288f144a","socketId":"hEdvsfNyBobinsSeAAAD","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369873193,"pid":478035,"hostname":"omarchy","conversationId":"68304fb8-0ea3-4b5f-93d2-9ea5f2a28d4c","messageId":"c86fe754-d905-4500-9e78-b07494506f6b","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369875748,"pid":478035,"hostname":"omarchy","conversationId":"68304fb8-0ea3-4b5f-93d2-9ea5f2a28d4c","messageId":"f40f2bac-8a3f-4f7c-aaf4-d4b832ebec48","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369878634,"pid":478035,"hostname":"omarchy","conversationId":"68304fb8-0ea3-4b5f-93d2-9ea5f2a28d4c","runId":"2facc449-bef8-4e30-ae74-ec1b5336b8ec","promptTokens":570,"completionTokens":59,"costUsd":0.00015264,"steps":2,"toolCalls":1,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":4359,"msg":"harness run settled"}
+PASS mid-task-correction
+{"level":30,"time":1795369878777,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-74e0ce12-7870-4088-8925-7584288f144a","socketId":"hEdvsfNyBobinsSeAAAD","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369878792,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-df58546f-32bb-4887-9a60-a12bdd0bfa39","socketId":"Ku4xEacoYmSPnVn2AAAF","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369878828,"pid":478035,"hostname":"omarchy","conversationId":"f8d60d3d-df67-4311-9bae-91792bb35843","messageId":"1d853a9f-2fee-4637-afc9-a3f3b062f1ec","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369881153,"pid":478035,"hostname":"omarchy","conversationId":"f8d60d3d-df67-4311-9bae-91792bb35843","messageId":"9ba66173-6244-4039-9eb3-dde891657c84","msg":"user message recorded; turn queued"}
+{"level":30,"time":1795369881259,"pid":478035,"hostname":"omarchy","conversationId":"f8d60d3d-df67-4311-9bae-91792bb35843","runId":"f6952bbc-2029-4381-a3cc-0473ae335db1","promptTokens":210,"completionTokens":46,"costUsd":0.00007044,"steps":2,"toolCalls":1,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":1340,"msg":"harness run settled"}
+PASS stop
+{"level":30,"time":1795369882464,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-df58546f-32bb-4887-9a60-a12bdd0bfa39","socketId":"Ku4xEacoYmSPnVn2AAAF","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369882479,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-aa7ae0c3-624d-436a-8e14-8f552bca5eda","socketId":"WPGykhgrF9f6W5sdAAAH","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369884681,"pid":478035,"hostname":"omarchy","conversationId":"78b37d55-42fb-40c8-a5bd-20c282cb1c02","runId":"5f4c341b-ef8b-4677-b5af-02068e64b9df","promptTokens":2600,"completionTokens":5,"costUsd":0.0001827,"steps":1,"toolCalls":0,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":2136,"msg":"harness run settled"}
+PASS nothing-new-result
+{"level":30,"time":1795369884686,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-aa7ae0c3-624d-436a-8e14-8f552bca5eda","socketId":"WPGykhgrF9f6W5sdAAAH","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369884702,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-f166e3e8-b9f6-49a3-990e-f3374befe567","socketId":"yyXbaHhgOkxh6EPNAAAJ","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369889502,"pid":478035,"hostname":"omarchy","conversationId":"804e6fca-5cb9-4e78-bf00-633786bc121d","runId":"5f4ab679-517f-4e46-a8ca-4dc4150a78ff","promptTokens":5860,"completionTokens":153,"costUsd":0.00120119,"steps":3,"toolCalls":1,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":4726,"msg":"harness run settled"}
+PASS misfired-trigger
+{"level":30,"time":1795369889506,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-f166e3e8-b9f6-49a3-990e-f3374befe567","socketId":"yyXbaHhgOkxh6EPNAAAJ","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369889519,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-e391ae7d-c47a-49c9-8e98-bac7b8eff5b7","socketId":"mGXHwCTUYFIEd73uAAAL","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369893308,"pid":478035,"hostname":"omarchy","conversationId":"e1e4ecea-0d54-4326-b033-32243e108ded","runId":"4134118f-b297-4d64-a3d1-9f33ebda98d2","promptTokens":1085,"completionTokens":109,"costUsd":0.00022594,"steps":2,"toolCalls":1,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":3723,"msg":"harness run settled"}
+PASS relevant-worker-result
+{"level":30,"time":1795369893313,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-e391ae7d-c47a-49c9-8e98-bac7b8eff5b7","socketId":"mGXHwCTUYFIEd73uAAAL","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369893326,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-8c0db82b-abfe-4d52-8911-355ed3a39c0c","socketId":"ugV-_C52IrNWSy5JAAAN","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369899894,"pid":478035,"hostname":"omarchy","conversationId":"6aee8038-5f0a-4b1d-83b9-0e33023f8632","runId":"6db220f2-748a-473e-8b05-4a1a040e22c4","promptTokens":8480,"completionTokens":226,"costUsd":0.00062524,"steps":3,"toolCalls":2,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":6500,"msg":"harness run settled"}
+PASS watcher-match
+{"level":30,"time":1795369899899,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-8c0db82b-abfe-4d52-8911-355ed3a39c0c","socketId":"ugV-_C52IrNWSy5JAAAN","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369899914,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-810f24b9-6b92-4b0e-b526-d8dedc6531b2","socketId":"mcbTjyIwPlkgzP1MAAAP","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369904924,"pid":478035,"hostname":"omarchy","conversationId":"a11db677-0a68-4d85-92e9-323901248db4","runId":"c1e58267-d2a9-46bf-b82a-0f30622991bd","promptTokens":764,"completionTokens":240,"costUsd":0.00025096,"steps":3,"toolCalls":2,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":4940,"msg":"harness run settled"}
+PASS requested-reminder
+{"level":30,"time":1795369904927,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-810f24b9-6b92-4b0e-b526-d8dedc6531b2","socketId":"mcbTjyIwPlkgzP1MAAAP","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369904944,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-0d64cf66-056f-400d-8bf3-cd849d2cd1e1","socketId":"xkyPAE3XH2ej_L3QAAAR","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369909770,"pid":478035,"hostname":"omarchy","conversationId":"0c5546df-cb68-4da3-9d5e-f86f6200621b","runId":"9a1b5f36-afdc-4611-b65e-fc4c840046b2","promptTokens":729,"completionTokens":235,"costUsd":0.00024466,"steps":3,"toolCalls":2,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":4754,"msg":"harness run settled"}
+PASS quiet-hours
+{"level":30,"time":1795369909842,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-0d64cf66-056f-400d-8bf3-cd849d2cd1e1","socketId":"xkyPAE3XH2ej_L3QAAAR","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369909856,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-d6b3efb8-2aee-4076-b8e5-f793d260e7ff","socketId":"GIierwYkOD7MP7fQAAAT","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369914620,"pid":478035,"hostname":"omarchy","conversationId":"e863459d-3f70-442b-b8a0-27675a9c4e6e","runId":"2498d726-cae5-4ffa-963c-44b630893867","promptTokens":785,"completionTokens":248,"costUsd":0.00025614,"steps":3,"toolCalls":2,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":4697,"msg":"harness run settled"}
+PASS digest
+{"level":30,"time":1795369914642,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-d6b3efb8-2aee-4076-b8e5-f793d260e7ff","socketId":"GIierwYkOD7MP7fQAAAT","open":0,"msg":"socket disconnected"}
+{"level":30,"time":1795369914657,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-1c418f90-ecdb-493d-a2a3-75446ca9c6bb","socketId":"FtD87bIoh4AfAK3FAAAV","open":1,"msg":"socket connected"}
+{"level":30,"time":1795369914693,"pid":478035,"hostname":"omarchy","conversationId":"12fce945-33f0-4840-8cfb-e5ae83df86e0","messageId":"edf16122-79bf-4c98-a9ab-0639a38114dd","msg":"user message recorded; turn queued"}
+{"level":40,"time":1795370035753,"pid":478035,"hostname":"omarchy","conversationId":"12fce945-33f0-4840-8cfb-e5ae83df86e0","runId":"61a30a91-bd23-45e9-bc7c-947be1d5a60d","msg":"run timed out; aborting"}
+{"level":30,"time":1795370035801,"pid":478035,"hostname":"omarchy","conversationId":"12fce945-33f0-4840-8cfb-e5ae83df86e0","runId":"61a30a91-bd23-45e9-bc7c-947be1d5a60d","promptTokens":117396,"completionTokens":5527,"costUsd":0.009668876,"steps":31,"toolCalls":30,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":120022,"msg":"harness run settled"}
+FAIL schedule-end-to-end: 
+Invalid `prisma.routine.findFirstOrThrow()` invocation in
+/home/too_geeky/projects/fpl/Mimir/scripts/eval-inbox.ts:325:46
+
+  322   `Set a one-time reminder at exactly ${at} to stretch. Use that exact timestamp.`,
+  323 );
+  324 await input.job.waitUntilFinished(events, 150000);
+→ 325 const routine = await prisma.routine.findFirstOrThrow(
+An operation failed because it depends on one or more records that were required but not found. No record was found for a query.
+{"level":30,"time":1795370035809,"pid":478035,"hostname":"omarchy","userId":"inbox-eval-1c418f90-ecdb-493d-a2a3-75446ca9c6bb","socketId":"FtD87bIoh4AfAK3FAAAV","open":0,"msg":"socket disconnected"}
+Inbox: 10/11; notification precision 1, recall 1, wrongly silent 0. Targets: 1.0/1.0/0 on these fixtures.
+error: script "eval-harness" exited with code 1
