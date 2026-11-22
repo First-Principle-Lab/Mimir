@@ -549,7 +549,16 @@ try {
           "Decision replay duplicated an external action",
         );
       }
-      await drainDeliveries({ userId });
+      // The draft-ready notification may correctly use low urgency and join
+      // the default one-hour digest. Advance the delivery clock past that
+      // window while still requiring an actual authenticated socket receipt.
+      await drainDeliveries({
+        userId,
+        now:
+          name === "unattended-draft"
+            ? new Date(Date.now() + 3600_000)
+            : undefined,
+      });
       const receiptDeadline = Date.now() + 3000;
       while (socketReceipts === 0 && Date.now() < receiptDeadline)
         await Bun.sleep(25);
@@ -585,6 +594,10 @@ try {
           arguments: c.arguments,
         })),
         externalCalls: myCalls(),
+        deliveries: await prisma.delivery.findMany({
+          where: { conversationId: c.id },
+          select: { urgency: true, status: true, availableAt: true },
+        }),
         socketReceipts,
       };
     } catch (error) {
@@ -600,6 +613,10 @@ try {
         messages: await prisma.message.findMany({
           where: { conversationId: c.id },
           select: { role: true, content: true },
+        }),
+        deliveries: await prisma.delivery.findMany({
+          where: { conversationId: c.id },
+          select: { urgency: true, status: true, availableAt: true },
         }),
         steps: await prisma.agentStep.findMany({
           where: { run: { conversationId: c.id }, kind: "tool_execution_end" },

@@ -45,6 +45,11 @@ published full real-inference evaluation and required PR CI.
    notification ID, so late receipts still update the correct routine occurrence.
 8. Private-calendar auto-approval must not extend to arbitrary shared calendars.
    A non-primary calendar now requires a card even when there are no attendees.
+9. The first published run passed 31/32 scenarios but checked the unattended
+   draft notification before a legitimate low-priority digest was due. The
+   evaluator now advances its delivery clock past that window and retains the
+   authenticated socket-receipt requirement. The affected live rerun passed
+   with low urgency, an unsent draft, no provider calls and a socket receipt.
 
 ## Verification and limits
 
@@ -71,6 +76,8 @@ published full real-inference evaluation and required PR CI.
 
 ## Published evidence
 
-Pending a clean-commit full harness run and required PR CI. The exploratory run
-passed 8/9 new scenarios; the browser discovery fix then passed its affected live
-case. These exploratory checks do not replace the published completion gate.
+Pending a fresh full harness run and required PR CI. The initial published run
+on `e8ac502` is preserved as
+`eval/2026-11-22-harness-phase-3-safe-writes-completion-review` (31/32 scenarios;
+the digest-clock evaluation finding above). Earlier exploratory checks do not
+replace the published completion gate.
