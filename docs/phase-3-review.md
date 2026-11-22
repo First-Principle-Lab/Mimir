@@ -50,10 +50,15 @@ published full real-inference evaluation and required PR CI.
    evaluator now advances its delivery clock past that window and retains the
    authenticated socket-receipt requirement. The affected live rerun passed
    with low urgency, an unsent draft, no provider calls and a socket receipt.
+10. The next published run rejected two truthful read-only replies because the
+    deterministic scorer did not recognize "only have read access" or "don't
+    currently have an email sending tool". Regression tests now accept those
+    limitations and still reject fabricated success. The read-only suite also
+    explicitly forbids all current write-tool names, including email_send.
 
 ## Verification and limits
 
-- Frozen install, lint, workspace typecheck, all **250 tests** (forced uncached),
+- Frozen install, lint, workspace typecheck, all **252 tests** (forced uncached),
   duplication check and static web export pass locally. All three evaluation
   scripts pass a focused TypeScript check. Both schema migrations are forward-only.
 - A fresh temporary database was upgraded through Phase 2, seeded with synthetic
@@ -79,5 +84,6 @@ published full real-inference evaluation and required PR CI.
 Pending a fresh full harness run and required PR CI. The initial published run
 on `e8ac502` is preserved as
 `eval/2026-11-22-harness-phase-3-safe-writes-completion-review` (31/32 scenarios;
-the digest-clock evaluation finding above). Earlier exploratory checks do not
-replace the published completion gate.
+the digest-clock evaluation finding above). The `-2` run on `b16d48a` records the
+two read-only scoring findings (10/12 Phase 1 scenarios; later groups did not
+run). Earlier exploratory checks do not replace the published completion gate.
