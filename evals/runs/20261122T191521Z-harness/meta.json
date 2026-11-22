@@ -1,0 +1,14 @@
+{
+  "topic": "phase 3 safe writes completion review",
+  "suite": "harness",
+  "status": "failed",
+  "exitCode": 1,
+  "testedCommit": "e8ac5025d80c2ad9d7288c881f79a81decbd97e8",
+  "testedRef": "feat/phase-3-safe-writes",
+  "branch": "eval/2026-11-22-harness-phase-3-safe-writes-completion-review",
+  "runId": "20261122T191521Z-harness",
+  "startedAt": "2026-11-22T19:15:22Z",
+  "finishedAt": "2026-11-22T19:21:52Z",
+  "runner": "local",
+  "runUrl": null
+}
