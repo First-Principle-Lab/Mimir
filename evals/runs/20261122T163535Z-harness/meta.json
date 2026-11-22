@@ -1,0 +1,14 @@
+{
+  "topic": "phase 1 read-only pi harness",
+  "suite": "harness",
+  "status": "passed",
+  "exitCode": 0,
+  "testedCommit": "f5444b78c476be31f943e85fe8368eba1e8de5a7",
+  "testedRef": "feat/phase1-pi-harness",
+  "branch": "eval/2026-11-22-harness-phase-1-read-only-pi-harness",
+  "runId": "20261122T163535Z-harness",
+  "startedAt": "2026-11-22T16:35:35Z",
+  "finishedAt": "2026-11-22T16:36:00Z",
+  "runner": "local",
+  "runUrl": null
+}

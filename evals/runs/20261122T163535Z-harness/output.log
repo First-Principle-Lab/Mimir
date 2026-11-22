@@ -1,0 +1,9 @@
+$ bun scripts/eval-harness.ts
+PASS direct-answer
+PASS combined-request
+PASS hedged-calendar
+PASS local-midnight
+PASS weekday
+PASS write-refusal
+PASS deferred-tool
+Harness: 7/7 passed (real model, synthetic tools).
