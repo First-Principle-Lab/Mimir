@@ -94,7 +94,12 @@ app.get("/health", async (_req, res) => {
   }
   const ok = db === "ok" && cache === "ok";
   getLogger().info({ checks: { db, redis: cache } }, "health check");
-  res.status(ok ? 200 : 503).json({ status: ok ? "ok" : "degraded", checks: { db, redis: cache } });
+  // commit lets the deploy workflow wait until the new version is the one answering.
+  res.status(ok ? 200 : 503).json({
+    status: ok ? "ok" : "degraded",
+    checks: { db, redis: cache },
+    commit: process.env.RENDER_GIT_COMMIT ?? null,
+  });
 });
 
 setupExpressErrorHandler(app);
