@@ -46,6 +46,6 @@ git show origin/eval/2026-11-23-retrieval-nightly:evals/runs/   # list the run d
 | `retrieval` | `scripts/eval-retrieval.ts` — memory recall gate over `fixtures/` (fails under 90% recall) | Postgres (pgvector), `OPENROUTER_API_KEY` |
 | `query` | `scripts/eval-query.ts` — response A/B with and without retrieved facts, LLM judge | Postgres, `OPENROUTER_API_KEY` |
 | `locomo` | `scripts/eval-locomo.ts` — daily 50-question sample of the public LoCoMo benchmark | Postgres, `OPENROUTER_API_KEY` |
-| `harness` | `scripts/eval-harness.ts` — live interaction model, synthetic read tools, deterministic scenario scoring | `OPENROUTER_API_KEY` |
+| `harness` | `scripts/eval-harness.ts` — live interaction model, synthetic read tools, deterministic scenario scoring | local Postgres/pgvector, Redis, `JWT_SECRET`, `OPENROUTER_API_KEY` |
 
 Never merge, rebase or delete `eval/*` branches; they are the record.

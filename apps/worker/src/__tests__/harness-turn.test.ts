@@ -143,6 +143,63 @@ afterAll(async () => {
 });
 
 describe("runTurn", () => {
+  test("a run that loses its lock cannot persist or deliver its final answer", async () => {
+    const other = await prisma.conversation.create({ data: { userId } });
+    const key = `harness-lock:${other.id}`;
+    try {
+      faux.setResponses([
+        async () => {
+          await redis.set(key, "replacement-worker", "PX", 10000);
+          return fauxAssistantMessage([
+            fauxText("Stale reply must never be delivered."),
+          ]);
+        },
+      ]);
+      const input = await prisma.message.create({
+        data: {
+          conversationId: other.id,
+          role: "user",
+          content: "lock-loss test",
+        },
+      });
+      await expect(
+        runTurn({ conversationId: other.id, userId, messageId: input.id }),
+      ).rejects.toBeInstanceOf(ConversationBusyError);
+      expect(await replyTo(input.id)).toHaveLength(0);
+      expect(await redis.get(key)).toBe("replacement-worker");
+      const entries = await prisma.sessionEntry.findMany({
+        where: { conversationId: other.id },
+      });
+      expect(JSON.stringify(entries.map((e) => e.data))).not.toContain(
+        "Stale reply must never be delivered",
+      );
+    } finally {
+      await redis.del(key);
+      await prisma.agentRun.deleteMany({ where: { conversationId: other.id } });
+      await prisma.message.deleteMany({ where: { conversationId: other.id } });
+      await prisma.conversation.delete({ where: { id: other.id } });
+    }
+  });
+
+  test("concurrent SessionHost opens reserve the conversation before SDK initialization", async () => {
+    const { SessionHost } = await import("../harness/session-host.js");
+    const host = new SessionHost();
+    const opts = {
+      entries: [],
+      specs: [],
+      ctx: { userId, conversationId },
+      runtimeContext: () => "context",
+    };
+    const first = host.open(conversationId, opts);
+    try {
+      await expect(host.open(conversationId, opts)).rejects.toThrow(
+        "already has an active session",
+      );
+      await first;
+    } finally {
+      host.evict(conversationId);
+    }
+  });
   test("a user turn cannot silently finish with NO_REPLY", async () => {
     // Keep this independent so it doesn't create the main conversation's pi
     // journal before the legacy-history bootstrap test.

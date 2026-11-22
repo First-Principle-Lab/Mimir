@@ -1,7 +1,38 @@
 import { describe, expect, test } from "bun:test";
-import { buildRuntimeContext, formatLocalTime } from "../harness/context.js";
+import {
+  buildRuntimeContext,
+  formatLocalTime,
+  localDayWindow,
+} from "../harness/context.js";
 
 const NOW = new Date("2026-11-22T16:10:00Z");
+
+test("calendar day boundaries use each date's offset, including DST and skipped midnight", () => {
+  expect(
+    localDayWindow(new Date("2026-11-01T16:00:00Z"), "America/New_York"),
+  ).toEqual({
+    start: "2026-11-01T04:00:00.000Z",
+    end: "2026-11-02T05:00:00.000Z",
+  });
+  expect(
+    localDayWindow(new Date("2026-03-08T16:00:00Z"), "America/New_York"),
+  ).toEqual({
+    start: "2026-03-08T05:00:00.000Z",
+    end: "2026-03-09T04:00:00.000Z",
+  });
+  expect(
+    localDayWindow(new Date("2018-11-04T12:00:00Z"), "America/Sao_Paulo"),
+  ).toEqual({
+    start: "2018-11-04T03:00:00.000Z",
+    end: "2018-11-05T02:00:00.000Z",
+  });
+  expect(
+    localDayWindow(new Date("2026-11-22T20:00:00Z"), "Asia/Kolkata"),
+  ).toEqual({
+    start: "2026-11-22T18:30:00.000Z",
+    end: "2026-11-23T18:30:00.000Z",
+  });
+});
 
 describe("formatLocalTime", () => {
   test("renders weekday, date, 24h time and offset in the user's zone", () => {

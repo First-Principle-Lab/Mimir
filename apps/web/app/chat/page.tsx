@@ -27,7 +27,7 @@ import {
 import type { ThreadMessage } from "@/lib/thread";
 import { cn } from "@/lib/utils";
 import { maybeNotifyDesktop } from "@/lib/push";
-import { findReply } from "@/lib/pending-reply";
+import { findReply, preservePendingStreams } from "@/lib/pending-reply";
 
 const API =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api/v1";
@@ -155,7 +155,9 @@ export default function ChatPage() {
         completedInputsRef.current.add(message.parentMessageId);
     }
     const thread = data.conversation.messages.map(toThreadMessage);
-    setMessages(thread);
+    setMessages((previous) =>
+      preservePendingStreams(thread, previous, completedInputsRef.current),
+    );
     // Only a reply that just arrived from this session's send gets the reveal
     // animation; a page reload shows the history as-is.
     if (pendingReplyRef.current) {

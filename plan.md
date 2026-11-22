@@ -6,20 +6,17 @@ parts of 10). Phases 14 (production hardening) and 15 (launch readiness) of that
 are folded into Phase 6 below. Repo rules for contributors and coding agents are in [AGENTS.md](AGENTS.md).
 
 Progress as of 2026-11-22: Phase 0 infrastructure is merged into `dev`. Phase 1
-is implemented for review: pi sessions, read-only tools and discovery, durable
-session/run/step journals, asynchronous chat and the live-model harness scenarios.
-Its CI exit gate is pending. The harness runner omitted from Phase 0 is included
-with Phase 1; Phase 2 scenario groups remain pending with the inbox work. Phases
-2–6 have not started.
+is implemented and reviewed in PR #3. The review fixes trust-boundary, lock,
+session-opening, model-limit, streaming and DST findings and evaluates actual
+inference through HTTP intake, BullMQ, durable journals and socket delivery.
+The full requirement/evidence matrix is in [the Phase 1 review](docs/phase-1-review.md).
+Completion requires its published real-inference run and required CI on the latest
+PR head. Phases 2–6 have not started. Background watching and writes are unavailable;
+existing chats retain their latest 50 text messages on first pi use and durable
+facts are preserved. The Phase 0 harness runner is included with Phase 1; inbox
+scenario groups arrive with Phase 2.
 
 ## Decisions
-
-Progress (2026-11-22): Phase 0 infrastructure is merged into `dev`. Phase 1 is
-implemented with passing local checks and seven live-model harness scenarios;
-its exit still requires the Phase 1 PR's CI checks. The harness scenario runner
-is included in that change. Phase 2–6 have not started. During Phase 1, background
-watching and writes are unavailable; existing chats retain their latest 50 text
-messages when first moved into a pi session, and durable facts are preserved.
 
 1. **Scrap the current agent logic completely.** The classifier-first harness has been tested by hand and
    doesn't work. There is no baseline comparison: it is deleted, not measured.
@@ -108,7 +105,9 @@ All of this goes in Phase 1, on `dev`. `main` (production) keeps serving v1 unti
 
 ## Phases
 
-Each phase is one or more PRs into `dev`. A phase is done when its exit criteria pass in CI.
+Each phase is one or more PRs into `dev`. Completion requires the dedicated review,
+resolved findings, actual-inference evaluation and required CI described in the
+[phase completion gate](AGENTS.md#phase-completion-gate).
 
 ### Phase 0 — Branches, CI/CD, eval infrastructure
 

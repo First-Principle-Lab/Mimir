@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { findReply } from "./pending-reply";
+import { findReply, preservePendingStreams } from "./pending-reply";
 
 test("a queued turn stays pending even when earlier replies exist", () => {
   const messages = [
@@ -14,4 +14,21 @@ test("a queued turn stays pending even when earlier replies exist", () => {
   };
   expect(findReply([...messages, reply], "client-id")).toEqual(reply);
   expect(findReply([...messages, reply], "another-client-id")).toBeUndefined();
+});
+
+test("polling preserves partial text until the matching durable reply arrives", () => {
+  const input = { id: "input" };
+  const stream = { id: "stream-input" };
+  const oldStream = { id: "stream-old-input" };
+  expect(
+    preservePendingStreams(
+      [input],
+      [input, stream, oldStream],
+      new Set(["old-input"]),
+    ),
+  ).toEqual([input, stream]);
+  const reply = { id: "reply" };
+  expect(
+    preservePendingStreams([input, reply], [input, stream], new Set(["input"])),
+  ).toEqual([input, reply]);
 });

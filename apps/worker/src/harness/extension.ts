@@ -16,6 +16,7 @@ export interface MimirExtensionOptions {
   ctx: ToolRunContext;
   // Rebuilt per model call so the time stays current across a long run.
   runtimeContext: () => string;
+  generation?: { maxOutputTokens: number; temperature: number };
 }
 
 // The Mimir harness as one inline pi extension: Mimir's tools, the policy gate,
@@ -73,7 +74,12 @@ export function mimirExtension(
             };
           } catch (e) {
             return {
-              content: [{ type: "text", text: describeToolError(spec, e) }],
+              content: [
+                {
+                  type: "text",
+                  text: renderToolResult(spec, describeToolError(spec, e)),
+                },
+              ],
               details: {},
               isError: true,
             };
@@ -99,6 +105,17 @@ export function mimirExtension(
         };
       }
       return undefined;
+    });
+
+    // The pinned OpenRouter provider uses the OpenAI chat payload. Keep the
+    // deployment's generation limits when embedding pi instead of its CLI.
+    pi.on("before_provider_request", async (event) => {
+      if (!opts.generation) return;
+      return {
+        ...(event.payload as Record<string, unknown>),
+        max_tokens: opts.generation.maxOutputTokens,
+        temperature: opts.generation.temperature,
+      };
     });
 
     // Runtime context goes right before the latest user message on every model

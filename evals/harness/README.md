@@ -1,16 +1,29 @@
 # Harness scenarios
 
-Run `bun run eval-harness` with `OPENROUTER_API_KEY`, or publish an immutable run
-with `scripts/eval/run.sh harness "phase 1 read-only harness" --push`.
+Run `bun run eval-harness` with `OPENROUTER_API_KEY`, local Postgres/pgvector and
+Redis (`DATABASE_URL`, `REDIS_URL`), and `JWT_SECRET`. Apply migrations first.
+The runner refuses remote database/Redis hosts and exits 2 without a model key.
+Publish immutable evidence from a clean commit with:
 
-The runner calls the configured interaction model through the production pi
-session, prompt, tool schemas, discovery and policy gate. Integration results
-are synthetic; it never accesses a real account. Scoring compares requested
-tool calls, forbidden actions, required/forbidden/optional replies, text fragments
-and local-date arguments. A missing key exits 2 and is never reported as a pass.
+```sh
+scripts/eval/run.sh harness "phase 1 completion review" --push
+```
 
-Phase 1 covers direct answers, combined requests, hedged phrasing, time zones,
-weekdays, deferred tools and the read-only boundary. CI runs scripted protocol
-tests separately from this live-model behavior eval. Inbox groups (bursts,
-mid-task corrections, nothing-new results, misfired triggers and quiet hours)
-will be added with Phase 2; this suite does not claim coverage for them yet.
+Each scenario uses authenticated HTTP intake, an isolated BullMQ queue, the
+production turn processor and pi session/prompt/tool registry, real model
+inference, Postgres journals, Redis pub/sub and an authenticated socket client.
+Only account responses and the clock are synthetic. No private account is read.
+Fixtures and the private queue are removed after the run.
+
+Deterministic scoring checks tools, forbidden actions, visible replies, content,
+write refusals, untrusted instructions and exact calendar intervals. Every turn
+also verifies successful inference/token accounting, durable session/run/step
+journals, streaming and settlement, and idempotent HTTP/worker replay. Results
+include those checks with tool arguments and final text; skipped inference is
+never a passing evaluation.
+
+Phase 1 covers direct answers, combined requests, hedged phrasing, local dates,
+DST, weekday, invalid zones, discovery, write restrictions, session rehydration
+and legacy-history bootstrap. Scripted tests separately cover protocol faults,
+policy enforcement and ownership. Inbox groups (bursts, mid-task corrections,
+background results, misfired triggers and quiet hours) belong to Phase 2.

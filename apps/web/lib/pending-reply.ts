@@ -20,3 +20,20 @@ export function findReply<T extends ReplyMessage>(
       )
     : undefined;
 }
+
+// Polling can arrive before the reply transaction commits. Keep its streamed
+// text until durable history contains the matching reply, then replace it.
+export function preservePendingStreams<T extends { id: string }>(
+  history: T[],
+  previous: T[],
+  completedInputs: ReadonlySet<string>,
+): T[] {
+  return [
+    ...history,
+    ...previous.filter(
+      (message) =>
+        message.id.startsWith("stream-") &&
+        !completedInputs.has(message.id.slice(7)),
+    ),
+  ];
+}

@@ -24,6 +24,13 @@ import { ModelNotAvailableError } from "./pi-runtime.js";
 import { SessionHost } from "./session-host.js";
 import { readToolsFor } from "./tools.js";
 
+// Eval runs use synthetic account data and a fixed clock while executing the
+// same locking, journaling, session, and delivery code as production.
+export interface TurnOptions {
+  readTools?: typeof readToolsFor;
+  now?: () => Date;
+}
+
 const prisma = getPrismaClient();
 
 export interface TurnJobData {
@@ -201,6 +208,8 @@ async function runConversation(
   content: string,
   runId: string,
   inputCreatedAt: Date,
+  options: TurnOptions,
+  assertOwned: () => Promise<void>,
 ): Promise<void> {
   const { conversationId, userId } = data;
   const log = getLogger().child({ conversationId, runId });
@@ -216,7 +225,7 @@ async function runConversation(
       where: { conversationId },
       orderBy: { seq: "asc" },
     }),
-    readToolsFor(userId),
+    (options.readTools ?? readToolsFor)(userId),
   ]);
   let facts: FactHit[] = [];
   if (messageCount >= HARNESS_FACTS_MIN_MESSAGES) {
@@ -255,7 +264,7 @@ async function runConversation(
       ctx: { userId, conversationId },
       runtimeContext: () =>
         buildRuntimeContext({
-          now: new Date(),
+          now: options.now?.() ?? new Date(),
           timezone: user?.timezone ?? null,
           facts,
         }),
@@ -263,6 +272,7 @@ async function runConversation(
   } catch (e) {
     if (!(e instanceof ModelNotAvailableError)) throw e;
     log.error({ err: e }, "interaction model unavailable");
+    await assertOwned();
     const replyId = await writeReply({
       conversationId,
       userId,
@@ -292,6 +302,7 @@ async function runConversation(
   const persistNew = () => {
     persistChain = persistChain
       .then(async () => {
+        await assertOwned();
         const fresh = session.sessionManager
           .getEntries()
           .filter((e) => !persisted.has(e.id));
@@ -324,6 +335,7 @@ async function runConversation(
     ) {
       persistChain = persistChain
         .then(async () => {
+          await assertOwned();
           await prisma.agentStep.create({
             data: {
               runId,
@@ -403,6 +415,7 @@ async function runConversation(
 
   let runError: unknown;
   try {
+    await assertOwned();
     await session.prompt(content);
     await session.waitForIdle();
   } catch (e) {
@@ -413,6 +426,7 @@ async function runConversation(
   }
   persistNew();
   await persistChain;
+  await assertOwned();
   if (persistError) throw persistError;
 
   const replies = repliesByInput(session.messages, fromIndex, 1);
@@ -493,7 +507,10 @@ async function runConversation(
   }
 }
 
-export async function runTurn(data: TurnJobData): Promise<void> {
+export async function runTurn(
+  data: TurnJobData,
+  options: TurnOptions = {},
+): Promise<void> {
   const log = getLogger().child({
     conversationId: data.conversationId,
     messageId: data.messageId,
@@ -520,6 +537,21 @@ export async function runTurn(data: TurnJobData): Promise<void> {
 
   const token = await acquireLock(data.conversationId);
   if (!token) throw new ConversationBusyError(data.conversationId);
+  let lost = false;
+  const loseOwnership = () => {
+    lost = true;
+    void sessions
+      .abort(data.conversationId)
+      .catch((error) =>
+        log.error({ err: error }, "failed to abort run after lock loss"),
+      );
+  };
+  const assertOwned = async () => {
+    if (lost || (await redis.get(lockKey(data.conversationId))) !== token) {
+      loseOwnership();
+      throw new ConversationBusyError(data.conversationId);
+    }
+  };
   const heartbeat = setInterval(
     () => {
       void redis
@@ -530,9 +562,13 @@ export async function runTurn(data: TurnJobData): Promise<void> {
           token,
           HARNESS_LOCK_TTL_MS,
         )
-        .catch((error) =>
-          log.error({ err: error }, "conversation lock renewal failed"),
-        );
+        .then((renewed) => {
+          if (renewed !== 1) loseOwnership();
+        })
+        .catch((error) => {
+          log.error({ err: error }, "conversation lock renewal failed");
+          loseOwnership();
+        });
     },
     Math.floor(HARNESS_LOCK_TTL_MS / 3),
   );
@@ -543,7 +579,14 @@ export async function runTurn(data: TurnJobData): Promise<void> {
     });
     if (answered?.replyMessageId) return;
     const runId = await startRun(data);
-    await runConversation(data, input.content, runId, input.createdAt);
+    await runConversation(
+      data,
+      input.content,
+      runId,
+      input.createdAt,
+      options,
+      assertOwned,
+    );
   } finally {
     sessions.evict(data.conversationId);
     clearInterval(heartbeat);
@@ -551,12 +594,16 @@ export async function runTurn(data: TurnJobData): Promise<void> {
   }
 }
 
-export async function turnProcessor(job: Job, token?: string): Promise<void> {
-  try {
-    await runTurn(job.data as TurnJobData);
-  } catch (error) {
-    if (!(error instanceof ConversationBusyError)) throw error;
-    await job.moveToDelayed(Date.now() + 1000, token);
-    throw new DelayedError();
-  }
+export function createTurnProcessor(options: TurnOptions = {}) {
+  return async function processTurn(job: Job, token?: string): Promise<void> {
+    try {
+      await runTurn(job.data as TurnJobData, options);
+    } catch (error) {
+      if (!(error instanceof ConversationBusyError)) throw error;
+      await job.moveToDelayed(Date.now() + 1000, token);
+      throw new DelayedError();
+    }
+  };
 }
+
+export const turnProcessor = createTurnProcessor();

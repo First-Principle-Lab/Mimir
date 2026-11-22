@@ -44,12 +44,16 @@ function modelRuntime(): Promise<ModelRuntime> {
 
 // The interaction model comes from model-config.json ("interaction"), falling
 // back to "chat_response" for configs that predate the harness.
-export function interactionModelId(): string {
+export function interactionConfig(): ReturnType<typeof llmConfigFor> {
   try {
-    return llmConfigFor("interaction").model;
+    return llmConfigFor("interaction");
   } catch {
-    return llmConfigFor("chat_response").model;
+    return llmConfigFor("chat_response");
   }
+}
+
+export function interactionModelId(): string {
+  return interactionConfig().model;
 }
 
 export class ModelNotAvailableError extends Error {
@@ -133,7 +137,9 @@ export async function openSession(
     noPromptTemplates: true,
     noThemes: true,
     systemPromptOverride: () => systemPrompt,
-    extensionFactories: [mimirExtension(opts)],
+    extensionFactories: [
+      mimirExtension({ ...opts, generation: interactionConfig() }),
+    ],
   });
   await resourceLoader.reload();
 

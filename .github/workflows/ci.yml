@@ -132,6 +132,21 @@ jobs:
     name: read-only harness scenarios
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: mimir
+          POSTGRES_PASSWORD: mimir
+          POSTGRES_DB: mimir
+        ports: ["5434:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mimir" --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6380:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     steps:
@@ -153,7 +168,10 @@ jobs:
       - name: Install
         if: steps.key.outputs.run == 'true'
         run: bun install --frozen-lockfile
-      - name: Evaluate the interaction model with synthetic read tools
+      - name: Migrate
+        if: steps.key.outputs.run == 'true'
+        run: bun run migrate
+      - name: Evaluate HTTP intake, queued inference, persistence and sockets
         if: steps.key.outputs.run == 'true'
         env:
           CI: "true"
