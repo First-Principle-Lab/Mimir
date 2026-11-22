@@ -87,7 +87,7 @@ export function gmailSearchTask(): Task {
     kind: "task",
     name: "search_email",
     description:
-      "Search the user's Gmail for messages matching a Gmail search query (e.g. 'from:openrouter.com', 'subject:invoice', 'has:attachment'). Returns real matches from Gmail's search API with sender and subject. Use this to answer whether specific mail exists — never conclude absence from the injected recent-mail list.",
+      "Search the user's Gmail for messages matching a Gmail search query (e.g. 'from:openrouter.com', 'subject:invoice', 'has:attachment'). Returns real matches from Gmail's search API with sender and subject. Use this to answer whether specific mail exists; an empty result means no match for that query, so try a broader query before concluding there is none.",
     inputSchema: z.object({
       query: z.string().describe("Gmail search query, e.g. 'from:openrouter.com' or 'subject:invoice'"),
     }),

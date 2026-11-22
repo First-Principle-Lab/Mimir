@@ -16,6 +16,7 @@ export async function trackModelCall({
   systemPromptHash,
   injectedBlocks,
   messageWindow,
+  costCents,
 }: {
   userId: string;
   useCase: string;
@@ -24,6 +25,9 @@ export async function trackModelCall({
   systemPromptHash?: string;
   injectedBlocks?: Array<{ type: string; refIds: string[] }>;
   messageWindow?: string[];
+  // Known cost (the pi harness gets it from the provider). Omitted = 0 until
+  // backfillCost fills it in from OpenRouter's generation endpoint.
+  costCents?: number;
 }): Promise<string | null> {
   try {
     const log = await prisma.modelCallLog.create({
@@ -38,7 +42,7 @@ export async function trackModelCall({
         cachedTokens: result?.cachedTokens,
         finishReason: result?.finishReason ?? "error",
         generationId: result?.generationId,
-        costCents: 0,
+        costCents: costCents ?? 0,
         latencyMs: result?.latencyMs ?? 0,
         success: !!result && !error,
         systemPromptHash,

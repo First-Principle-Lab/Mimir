@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadEnv } from "../intent-iteration/_env.js";
+import { loadEnv } from "../_env.js";
 
 // Phase 13.5 apply step — manual, human-gated. Records status: applied on a
 // pending proposal AND reflects the new value in model-config.json (under the

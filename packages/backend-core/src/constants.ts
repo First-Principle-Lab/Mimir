@@ -16,42 +16,19 @@ export const LOGIN_RATE_WINDOW_SECONDS = 15 * 60;
 // Auth — Google OAuth
 export const GOOGLE_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
-// Agent system — tunables for dedup, execution context, and dormancy
-export const AGENT_DEDUP_THRESHOLD = 0.85; // cosine similarity; >= => possible duplicate
-export const AGENT_CONTEXT_MAX_EVENTS = 40; // last N AgentEvents as execution context
-export const AGENT_CONTEXT_MAX_TOKENS = 8000; // whichever of events/tokens is smaller wins
-export const AGENT_DORMANCY_DAYS = 7; // no AgentEvent for this long => dormant
-
-// A mail judged "noise" is held briefly, then re-judged. The filter is cheap
-// (gpt-4o-mini) and imperfect; a permanent claim would silently drop a real
-// meeting invite on one bad call. 24h bounds the re-judge cost per mail.
-export const MAIL_NOISE_TTL_SECONDS = 24 * 60 * 60;
-
 // Hosted browser sessions cost real money per minute. Keep the cap low enough
 // that a runaway loop can't produce a surprise bill.
 export const BROWSER_DAILY_MINUTES_CAP = 30; // per-user per-day hosted-browser minutes
 
-// Reflector — generate + evaluate loop for complex tasks.
-export const REFLECTOR_MAX_ATTEMPTS = 3; // cap on generate+eval rounds; exhaust => best-scoring attempt surfaces
-export const REFLECTOR_TIME_BUDGET_MS = 60_000; // whole-loop budget = 2x the 30s transport ceiling; forces early exit
+// BullMQ queue the api enqueues user turns on and the worker's harness consumes.
+export const CONVERSATION_TURNS = "conversation-turns";
 
-// Planning — replan cap for a complex run whose step fails.
-export const PLAN_REPLAN_CAP = 2; // total attempts: initial plan + up to 1 replan; exhaust => partial progress + explicit failure
-
-// Max concurrent worker steps per parallel group. Bounds a single user turn's
-// fan-out so it can't open unbounded parallel LLM calls.
-export const MAX_PARALLEL_WORKERS = 5;
-
-// Hardening — per-step wall-clock ceiling so one hung worker (no throw, no
-// resolve) can't block the whole batch and thus the whole task forever.
-// 2 minutes is well above a legitimate step's tool loop (30s transport ceiling
-// x MAX_TOOL_DEPTH turns) but bounds a runaway/garbage step.
-export const PLAN_STEP_TIMEOUT_MS = 120_000;
-
-// Hardening — cap each worker output's contribution to the aggregation call
-// (and its concatenation fallback) so one giant/binary worker can't blow
-// the surface tier's context budget or balloon the final reply. Tunable.
-export const AGGREGATE_OUTPUT_MAX_CHARS = 8000;
+// Harness (pi) — the interaction agent's run loop.
+export const HARNESS_TURN_TIMEOUT_MS = 120_000; // abort a run that hasn't settled by then
+export const HARNESS_TOOL_OUTPUT_MAX_CHARS = 12_000; // cap each tool result the model sees; longer output is truncated with a note
+export const HARNESS_LOCK_TTL_MS = 150_000; // per-conversation run lock; > HARNESS_TURN_TIMEOUT_MS so a live run never loses it
+export const HARNESS_FACTS_MIN_MESSAGES = 50; // inject remembered facts into the runtime context once a thread is this long
+export const HARNESS_LEGACY_HISTORY_LIMIT = 50; // seed this many v1 messages on the first pi turn; older facts remain searchable
 
 // How many active ExtractedFacts to inject into reply context on a top-K embedding
 // search. Bounded to keep prompt context lean.

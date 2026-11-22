@@ -7,7 +7,7 @@ on:
       suite:
         description: Eval suite
         type: choice
-        options: [retrieval, query, locomo]
+        options: [retrieval, query, locomo, harness]
         default: retrieval
       topic:
         description: What this eval run is about
@@ -29,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ github.event_name == 'schedule' && fromJSON('["retrieval","query","locomo"]') || fromJSON(format('["{0}"]', inputs.suite)) }}
+        suite: ${{ github.event_name == 'schedule' && fromJSON('["retrieval","query","locomo","harness"]') || fromJSON(format('["{0}"]', inputs.suite)) }}
     services:
       postgres:
         image: pgvector/pgvector:pg16

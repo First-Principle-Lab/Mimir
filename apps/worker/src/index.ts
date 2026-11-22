@@ -1,40 +1,22 @@
 import { getConfig, getLogger, version } from "@mimir/backend-core";
 import {
-  scheduleCalendarPollSweep,
+  removeObsoleteSchedulers,
   scheduleConnectionCanary,
-  scheduleDormancySweep,
   scheduleFactExtractionSweep,
   scheduleGithubHookSweep,
-  scheduleGithubPollSweep,
-  scheduleMailPollSweep,
-  scheduleTriggerTick,
   scheduleWatchRenewal,
   startWorkers,
 } from "./infra/queues.js";
 import { startOutboxRelay } from "./infra/outbox-relay.js";
-import { startWebhookRelay } from "./infra/webhook-relay.js";
 
 getConfig();
 startWorkers();
 startOutboxRelay();
-startWebhookRelay();
-void scheduleDormancySweep().catch((e) =>
-  getLogger().error({ err: e }, "failed to schedule dormancy sweep"),
-);
-void scheduleMailPollSweep().catch((e) =>
-  getLogger().error({ err: e }, "failed to schedule mail poll sweep"),
-);
-void scheduleGithubPollSweep().catch((e) =>
-  getLogger().error({ err: e }, "failed to schedule github poll sweep"),
-);
-void scheduleCalendarPollSweep().catch((e) =>
-  getLogger().error({ err: e }, "failed to schedule calendar poll sweep"),
+void removeObsoleteSchedulers().catch((e) =>
+  getLogger().error({ err: e }, "failed to remove obsolete schedulers"),
 );
 void scheduleGithubHookSweep().catch((e) =>
   getLogger().error({ err: e }, "failed to schedule github hook sweep"),
-);
-void scheduleTriggerTick().catch((e) =>
-  getLogger().error({ err: e }, "failed to schedule trigger tick"),
 );
 void scheduleWatchRenewal().catch((e) =>
   getLogger().error({ err: e }, "failed to schedule watch renewal"),

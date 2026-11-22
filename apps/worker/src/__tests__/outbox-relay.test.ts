@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { Queue } from "bullmq";
 
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
@@ -9,306 +10,79 @@ const { getPrismaClient } = await import("@mimir/backend-core");
 const { drainOutbox } = await import("../infra/outbox-relay.js");
 
 const prisma = getPrismaClient();
-// Own connections so this file's afterAll doesn't fight queues.test.ts's singletons.
-const agentJobs = new Queue("agent-jobs", {
-  connection: { url: process.env.REDIS_URL, maxRetriesPerRequest: null },
-});
-const emailJobs = new Queue("email-jobs", {
-  connection: { url: process.env.REDIS_URL, maxRetriesPerRequest: null },
-});
+const connection = { url: process.env.REDIS_URL, maxRetriesPerRequest: null };
+// Throwaway queues, so a live dev worker can't consume what this test enqueues.
+const suffix = Date.now();
+const queues = {
+  turns: new Queue(`outbox-turns-${suffix}`, { connection }),
+  facts: new Queue(`outbox-facts-${suffix}`, { connection }),
+  maintenance: new Queue(`outbox-maint-${suffix}`, { connection }),
+};
+const tag = randomUUID();
+const rowIds: string[] = [];
 
-const agentId = `test-agent-${Date.now()}`;
-const userId = `outbox-test-user-${Date.now()}`;
-const convId = `outbox-test-conv-${Date.now()}`;
-// The dev worker owns the real agent-jobs/email-jobs queues (shared Redis), so
-// a job enqueued here and left behind gets drained by the running worker against
-// already-deleted test data. Track what we enqueue and remove it in afterAll.
-const enqueuedJobIds: string[] = [];
-
-beforeAll(async () => {
-  await prisma.user.create({
-    data: { id: userId, email: `${userId}@test.local`, passwordHash: "x" },
-  });
-  await prisma.conversation.create({ data: { id: convId, userId } });
-  await prisma.agent.create({
-    data: {
-      id: agentId,
-      userId,
-      ownerConversationId: convId,
-      taskDescription: "test task",
-    },
-  });
-});
-
-afterAll(async () => {
-  for (const id of enqueuedJobIds) {
-    const [agentJob, emailJob] = await Promise.all([
-      agentJobs.getJob(id),
-      emailJobs.getJob(id),
-    ]);
-    await agentJob?.remove().catch(() => {});
-    await emailJob?.remove().catch(() => {});
-  }
-  await prisma.trigger.deleteMany({ where: { agentId } });
-  await prisma.plan.deleteMany({ where: { agentId } });
-  await prisma.reflectionEvent.deleteMany({ where: { agentId } });
-  await prisma.agentEvent.deleteMany({ where: { agentId } });
-  await prisma.agent.deleteMany({ where: { id: agentId } });
-  await prisma.outboxEvent.deleteMany({
-    where: { payload: { path: ["agentId"], equals: agentId } },
-  });
-  await prisma.outboxEvent.deleteMany({ where: { eventType: "email_send" } });
-  // The dev worker may have executed an enqueued job against this conversation
-  // (an agent run writes a surfaced message into it) — clear dependents first.
-  await prisma.message.deleteMany({ where: { conversationId: convId } });
-  await prisma.conversationSummary.deleteMany({ where: { conversationId: convId } });
-  await prisma.conversation.deleteMany({ where: { id: convId } });
-  await prisma.user.delete({ where: { id: userId } });
-  await agentJobs.close();
-  await emailJobs.close();
-});
-
-async function poll<T>(
-  fn: () => Promise<T>,
-  ok: (t: T) => boolean,
-  timeoutMs = 5000,
-): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const v = await fn();
-    if (ok(v)) return v;
-    if (Date.now() > deadline) throw new Error("poll timed out");
-    await Bun.sleep(50);
-  }
+async function row(eventType: string, payload: Record<string, unknown>) {
+  const r = await prisma.outboxEvent.create({ data: { eventType, payload: { ...payload, tag } } });
+  rowIds.push(r.id);
+  return r;
 }
 
+// Other suites share the table, so only drain while our rows are the only unprocessed ones.
+async function drainOurs() {
+  await prisma.outboxEvent.updateMany({
+    where: { processedAt: null, id: { notIn: rowIds } },
+    data: { processedAt: new Date() },
+  });
+  return drainOutbox(queues);
+}
+
+afterAll(async () => {
+  await prisma.outboxEvent.deleteMany({ where: { id: { in: rowIds } } });
+  for (const q of Object.values(queues)) {
+    await q.obliterate({ force: true });
+    await q.close();
+  }
+});
+
 describe("outbox relay", () => {
-  test("an unprocessed OutboxEvent row is enqueued to agent-jobs and marked processed", async () => {
-    const row = await prisma.outboxEvent.create({
-      data: {
-        eventType: "spawn_agent",
-        payload: { agentId, trigger: "user_message" },
-      },
-    });
-
-    const enqueued = await drainOutbox(agentJobs);
-
-    expect(enqueued).toBe(1);
-    enqueuedJobIds.push(`outbox-${row.id}`);
-    await poll(
-      () => prisma.outboxEvent.findUnique({ where: { id: row.id } }),
-      (r) => r?.processedAt != null,
-    );
-    const job = await agentJobs.getJob(`outbox-${row.id}`);
-    expect(job?.data).toMatchObject({ agentId, trigger: "user_message" });
+  test("conversation_turn rows go to the turn queue under the api's fast-path jobId", async () => {
+    const messageId = randomUUID();
+    const r = await row("conversation_turn", { conversationId: "c", userId: "u", messageId });
+    expect(await drainOurs()).toBe(1);
+    const job = await queues.turns.getJob(`turn-${messageId}`);
+    expect(job?.data).toMatchObject({ messageId });
+    expect((await prisma.outboxEvent.findUnique({ where: { id: r.id } }))?.processedAt).not.toBeNull();
   });
 
-  test("a row without agentId is skipped and marked processed (no crash-loop)", async () => {
-    const row = await prisma.outboxEvent.create({
-      data: { eventType: "unknown", payload: { foo: "bar" } },
-    });
-
-    const enqueued = await drainOutbox(agentJobs);
-
-    expect(enqueued).toBe(0);
-    const after = await prisma.outboxEvent.findUnique({
-      where: { id: row.id },
-    });
-    expect(after?.processedAt).not.toBeNull();
+  test("an already-enqueued turn is not enqueued twice", async () => {
+    const messageId = randomUUID();
+    await queues.turns.add("turn", { messageId }, { jobId: `turn-${messageId}` });
+    await row("conversation_turn", { conversationId: "c", userId: "u", messageId });
+    await drainOurs();
+    expect(await queues.turns.getJobCountByTypes("waiting", "delayed", "prioritized")).toBe(2); // this + the previous test's
   });
 
-  test("an enqueue failure mid-spawn leaves the row unprocessed; a later relay recovers it", async () => {
-    // 4.4.4 "kill Redis mid-spawn": the OutboxEvent row is durable in Postgres,
-    // but the BullMQ enqueue (Redis) fails. The row must survive unprocessed and
-    // be drained once Redis is healthy — nothing is lost.
-    const row = await prisma.outboxEvent.create({
-      data: {
-        eventType: "spawn_agent",
-        payload: { agentId, trigger: "user_message" },
-      },
-    });
-
-    const broken = {
-      add: async () => {
-        throw new Error("redis down (simulated)");
-      },
-    } as unknown as Parameters<typeof drainOutbox>[0];
-    const enqueuedDown = await drainOutbox(broken);
-
-    expect(enqueuedDown).toBe(0);
-    expect(
-      (await prisma.outboxEvent.findUnique({ where: { id: row.id } }))
-        ?.processedAt,
-    ).toBeNull();
-
-    const enqueued = await drainOutbox(agentJobs);
-
-    expect(enqueued).toBe(1);
-    enqueuedJobIds.push(`outbox-${row.id}`);
-    await poll(
-      () => prisma.outboxEvent.findUnique({ where: { id: row.id } }),
-      (r) => r?.processedAt != null,
-    );
-    const job = await agentJobs.getJob(`outbox-${row.id}`);
-    expect(job?.data).toMatchObject({ agentId, trigger: "user_message" });
+  test("extract_facts rows coalesce per conversation per minute", async () => {
+    const windowEnd = new Date().toISOString();
+    await row("extract_facts", { conversationId: "conv-x", windowEnd });
+    await row("extract_facts", { conversationId: "conv-x", windowEnd });
+    expect(await drainOurs()).toBe(2);
+    expect(await queues.facts.getJobCountByTypes("waiting", "delayed", "prioritized")).toBe(1);
   });
 
-  test("an email_send row is routed to email-jobs and marked processed", async () => {
-    const payload = {
-      userId,
-      draftId: "draft-1",
-      messageId: "msg-1",
-      conversationId: convId,
-      to: "alice@example.com",
-      subject: "Hi",
-      parentMessageId: "parent-1",
-    };
-    const row = await prisma.outboxEvent.create({
-      data: { eventType: "email_send", payload },
-    });
-
-    const enqueued = await drainOutbox(agentJobs, emailJobs);
-
-    expect(enqueued).toBe(1);
-    enqueuedJobIds.push(`outbox-${row.id}`);
-    await poll(
-      () => prisma.outboxEvent.findUnique({ where: { id: row.id } }),
-      (r) => r?.processedAt != null,
-    );
-    const job = await emailJobs.getJob(`outbox-${row.id}`);
-    expect(job?.data).toMatchObject(payload);
+  test("github_hook_register rows go to the maintenance queue", async () => {
+    await row("github_hook_register", { userId: "u-1" });
+    await drainOurs();
+    const [job] = await queues.maintenance.getJobs(["waiting", "delayed", "prioritized"]);
+    expect(job).toMatchObject({ name: "github-hook-register", data: { userId: "u-1" } });
   });
 
-  test("a one_shot row (no agentId) is routed to agent-once and marked processed", async () => {
-    // Throwaway queue name: queues.test.ts's startWorkers() registers a worker on
-    // the real "agent-once" queue in the SAME test process, which would lock the
-    // job and race the cleanup below. A unique name has no consumer.
-    const onceJobs = new Queue(`once-${Date.now()}`, {
-      connection: { url: process.env.REDIS_URL, maxRetriesPerRequest: null },
-    });
-    const payload = {
-      userId,
-      conversationId: convId,
-      content: "use the browser to check today's gold price",
-    };
-    const row = await prisma.outboxEvent.create({
-      data: { eventType: "one_shot", payload },
-    });
-
-    const enqueued = await drainOutbox(agentJobs, emailJobs, onceJobs);
-
-    expect(enqueued).toBe(1);
-    await poll(
-      () => prisma.outboxEvent.findUnique({ where: { id: row.id } }),
-      (r) => r?.processedAt != null,
-    );
-    const job = await onceJobs.getJob(`outbox-${row.id}`);
-    expect(job?.data).toMatchObject(payload);
-    await job?.remove();
-    await onceJobs.close();
-  });
-
-  test("a github_hook_register row enqueues an agent-triggers job keyed by ROW (fresh per connect, retry policy applied)", async () => {
-    // Throwaway queue: the shared agent-triggers queue is owned by the live
-    // worker in this process (queues.test.ts) and would sweep the job away.
-    const triggerQ = new Queue(`trigger-${Date.now()}`, {
-      connection: { url: process.env.REDIS_URL, maxRetriesPerRequest: null },
-    });
-    const row = await prisma.outboxEvent.create({
-      data: { eventType: "github_hook_register", payload: { userId } },
-    });
-
-    const enqueued = await drainOutbox(agentJobs, emailJobs, undefined, undefined, triggerQ);
-
-    expect(enqueued).toBe(1);
-    await poll(
-      () => prisma.outboxEvent.findUnique({ where: { id: row.id } }),
-      (r) => r?.processedAt != null,
-    );
-    // Keyed by the outbox row id, not the user, so a re-connect after a
-    // disconnect (hooks removed) is a NEW job that actually runs — a
-    // userId-keyed job would be swallowed by the retained prior id.
-    const job = await triggerQ.getJob(`gh-hook-${row.id}`);
-    expect(job?.data).toMatchObject({ userId });
-    expect(job?.opts.attempts).toBeGreaterThan(1); // retryPolicy spread
-    await job?.remove();
-    await prisma.outboxEvent.deleteMany({ where: { id: row.id } });
-    await triggerQ.close();
-  });
-
-  test("extract_facts coalescing: SAME window -> ONE job; a LATER window still gets a fresh job (no permanent jobId block)", async () => {
-    const factQueue = new Queue(`fact-${Date.now()}`, {
-      connection: { url: process.env.REDIS_URL, maxRetriesPerRequest: null },
-    });
-    const onceQueue = new Queue(`once-co-${Date.now()}`, {
-      connection: { url: process.env.REDIS_URL, maxRetriesPerRequest: null },
-    });
-    const conv = await prisma.conversation.create({
-      data: { id: `co-single-${Date.now()}`, userId },
-    });
-    const base = Date.now() - 120_000;
-    // Same minute for both -> same windowed jobId -> coalesce into ONE job.
-    const payload = {
-      conversationId: conv.id,
-      userId,
-      windowEnd: new Date(base).toISOString(),
-    };
-    const r1 = await prisma.outboxEvent.create({
-      data: { eventType: "extract_facts", payload },
-    });
-    const r2 = await prisma.outboxEvent.create({
-      data: { eventType: "extract_facts", payload },
-    });
-
-    await drainOutbox(agentJobs, emailJobs, onceQueue, factQueue);
-
-    await poll(
-      () =>
-        prisma.outboxEvent.count({
-          where: { id: { in: [r1.id, r2.id] }, processedAt: { not: null } },
-        }),
-      (c) => c === 2,
-    );
-    const jobId = `fact-${conv.id}-${Math.floor(base / 60_000)}`;
-    expect(await factQueue.getJob(jobId)).toBeTruthy();
-    expect(
-      (await factQueue.getJobs(["waiting", "active", "delayed"])).filter(
-        (j) => j.id === jobId,
-      ).length,
-    ).toBe(1);
-    await factQueue.getJob(jobId).then((j) => j?.remove());
-
-    // Later window (next minute) for the SAME conversation -> a DIFFERENT jobId,
-    // so a second burst AFTER the first completed still gets a fresh job. This is
-    // the regression the static `fact-<conversationId>` key would have hit (it
-    // would block forever on the completed job's retained ID).
-    const payload2 = {
-      conversationId: conv.id,
-      userId,
-      windowEnd: new Date(base + 60_000).toISOString(),
-    };
-    const r3 = await prisma.outboxEvent.create({
-      data: { eventType: "extract_facts", payload: payload2 },
-    });
-    await drainOutbox(agentJobs, emailJobs, onceQueue, factQueue);
-    await poll(
-      () =>
-        prisma.outboxEvent.count({
-          where: { id: { in: [r3.id] }, processedAt: { not: null } },
-        }),
-      (c) => c === 1,
-    );
-    const jobId2 = `fact-${conv.id}-${Math.floor((base + 60_000) / 60_000)}`;
-    expect(jobId2).not.toBe(jobId);
-    const job2 = await factQueue.getJob(jobId2);
-    expect(job2).toBeTruthy();
-    await job2?.remove();
-
-    await factQueue.close();
-    await onceQueue.close();
-    await prisma.outboxEvent.deleteMany({
-      where: { id: { in: [r1.id, r2.id, r3.id] } },
-    });
-    await prisma.conversation.delete({ where: { id: conv.id } });
+  test("malformed or retired rows are skipped and marked processed", async () => {
+    const a = await row("conversation_turn", {}); // no messageId
+    const b = await row("spawn_agent", { agentId: "old" }); // the deleted pipeline's event type
+    expect(await drainOurs()).toBe(0);
+    for (const r of [a, b]) {
+      expect((await prisma.outboxEvent.findUnique({ where: { id: r.id } }))?.processedAt).not.toBeNull();
+    }
   });
 });

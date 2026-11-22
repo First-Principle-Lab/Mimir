@@ -14,14 +14,18 @@ let io: Server | null = null;
 // handshake with the access_token cookie and tracking the user's live sockets so
 // pub/sub can push to them.
 export function initSocket(server: HttpServer): void {
-  const origins = [cfg.WEB_APP_URL, "http://localhost:3000", "tauri://localhost"].filter(
-    (o): o is string => Boolean(o),
-  );
+  const origins = [
+    cfg.WEB_APP_URL,
+    "http://localhost:3000",
+    "tauri://localhost",
+  ].filter((o): o is string => Boolean(o));
   io = new Server(server, { cors: { origin: origins, credentials: true } });
 
   io.use(async (socket, next) => {
     const token = parseCookies(socket.handshake.headers.cookie).access_token;
-    const userId = token ? await verifyAccessToken(token, cfg.JWT_SECRET) : null;
+    const userId = token
+      ? await verifyAccessToken(token, cfg.JWT_SECRET)
+      : null;
     if (!userId) {
       next(new Error("unauthorized"));
       return;
@@ -35,22 +39,34 @@ export function initSocket(server: HttpServer): void {
     let ids = socketsByUser.get(userId);
     if (!ids) socketsByUser.set(userId, (ids = new Set()));
     ids.add(socket.id);
-    getLogger().info({ userId, socketId: socket.id, open: ids.size }, "socket connected");
+    getLogger().info(
+      { userId, socketId: socket.id, open: ids.size },
+      "socket connected",
+    );
     // Manual ping/pong test event (distinct from socket.io's wire-level ping).
     socket.on("ping", (cb) => {
-      if (typeof cb === "function") cb({ event: "pong", at: new Date().toISOString() });
+      if (typeof cb === "function")
+        cb({ event: "pong", at: new Date().toISOString() });
       else socket.emit("pong", { at: new Date().toISOString() });
     });
     socket.on("disconnect", () => {
       ids.delete(socket.id);
-      if (ids.size === 0 && socketsByUser.get(userId) === ids) socketsByUser.delete(userId);
-      getLogger().info({ userId, socketId: socket.id, open: ids.size }, "socket disconnected");
+      if (ids.size === 0 && socketsByUser.get(userId) === ids)
+        socketsByUser.delete(userId);
+      getLogger().info(
+        { userId, socketId: socket.id, open: ids.size },
+        "socket disconnected",
+      );
     });
   });
 }
 
 // Look up a user's live sockets and emit to all of them.
-export function emitToUser(userId: string, event: string, payload: unknown): number {
+export function emitToUser(
+  userId: string,
+  event: string,
+  payload: unknown,
+): number {
   const ids = socketsByUser.get(userId);
   if (!io || !ids || ids.size === 0) return 0;
   for (const socketId of ids) io.to(socketId).emit(event, payload);
@@ -65,22 +81,42 @@ export function initPubSub(subscriber: Redis): void {
   if (pubsubStarted) return;
   pubsubStarted = true;
   subscriber.psubscribe("user-events:*");
-  subscriber.on("error", (e) => getLogger().error({ err: e }, "pub/sub redis error"));
+  subscriber.on("error", (e) =>
+    getLogger().error({ err: e }, "pub/sub redis error"),
+  );
   subscriber.on("pmessage", (_pattern, chan, message) => {
     const userId = chan.replace(/^user-events:/, "");
     let parsed: { event?: string; payload?: unknown };
     try {
       parsed = JSON.parse(message);
     } catch {
-      getLogger().warn({ channel: chan, message }, "dropping non-JSON pub/sub payload");
+      getLogger().warn(
+        { channel: chan, message },
+        "dropping non-JSON pub/sub payload",
+      );
       return;
     }
     // Payloads carry their own event name ({event:'new_message',...}); emit on
     // that name so the web client can wire per-event handlers. Falls back to "debug".
     const eventName = typeof parsed.event === "string" ? parsed.event : "debug";
+    if (eventName === "message_delta" || eventName === "turn_settled") {
+      emitToUser(userId, eventName, parsed.payload);
+      return;
+    }
     // Live socket → web push. No email: email is a watched source, not a delivery channel.
-    void deliverToUser(userId, eventName, (parsed.payload ?? {}) as { [k: string]: unknown })
-      .then((delivery) => getLogger().info({ userId, eventName, channel: delivery }, "user event delivered"))
-      .catch((e) => getLogger().error({ err: e, userId }, "delivery decision failed"));
+    void deliverToUser(
+      userId,
+      eventName,
+      (parsed.payload ?? {}) as { [k: string]: unknown },
+    )
+      .then((delivery) =>
+        getLogger().info(
+          { userId, eventName, channel: delivery },
+          "user event delivered",
+        ),
+      )
+      .catch((e) =>
+        getLogger().error({ err: e, userId }, "delivery decision failed"),
+      );
   });
 }

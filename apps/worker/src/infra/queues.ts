@@ -1,26 +1,27 @@
-import { getConfig, getLogger, runWithContext } from "@mimir/backend-core";
+import {
+  CONVERSATION_TURNS,
+  getConfig,
+  getLogger,
+  runWithContext,
+} from "@mimir/backend-core";
 import { Queue, Worker, type Job, type JobsOptions } from "bullmq";
-import { executeAgent, executeOnce } from "../agent/agent-execution.js";
 import {
   runStaleFactExtractionSweep,
   runExtractForConversation,
 } from "../agent/fact-extraction-run.js";
-import { runDormancySweep } from "../agent/dormancy.js";
-import { sendEmailJob } from "../email/email-send-job.js";
-import { pollGithubActivity } from "../integrations/github/github-poll.js";
-import { githubRequestFor, registerGithubWebhooksForUser, runGithubHookSweep } from "../integrations/github/github-webhooks.js";
-import { pollImportantMail } from "./mail-poll.js";
-import { runTriggerSweep, TRIGGER_TICK_CRON } from "../agent/triggers.js";
+import { turnProcessor } from "../harness/turn.js";
+import {
+  githubRequestFor,
+  registerGithubWebhooksForUser,
+  runGithubHookSweep,
+} from "../integrations/github/github-webhooks.js";
 import { runWatchRenewal } from "../integrations/gmail/watch-renewal.js";
 import { runConnectionCanary } from "../integrations/connection-canary.js";
-import { pollCalendarActivity } from "../integrations/calendar/calendar-poll.js";
 
-export const AGENT_JOBS = "agent-jobs";
-export const AGENT_ONCE = "agent-once";
-export const AGENT_TRIGGERS = "agent-triggers";
-export const WEBHOOK_PROCESSING = "webhook-processing";
-export const FAILED_AGENT_JOBS = "failed-agent-jobs";
-export const EMAIL_JOBS = "email-jobs";
+// Queue name kept from the old pipeline so its existing job schedulers in Redis
+// stay addressable (and removable, see removeObsoleteSchedulers).
+export const MAINTENANCE = "agent-triggers";
+export const FAILED_JOBS = "failed-agent-jobs";
 export const FACT_EXTRACTION = "fact-extraction";
 
 const cfg = getConfig();
@@ -31,27 +32,19 @@ export const retryPolicy: JobsOptions = {
   backoff: { type: "exponential", delay: 5000 },
 };
 
-export const agentJobs = new Queue(AGENT_JOBS, { connection });
-export const onceJobs = new Queue(AGENT_ONCE, { connection });
-export const agentTriggers = new Queue(AGENT_TRIGGERS, { connection });
-export const webhookProcessing = new Queue(WEBHOOK_PROCESSING, { connection });
-export const failedAgentJobs = new Queue(FAILED_AGENT_JOBS, { connection });
-export const emailJobs = new Queue(EMAIL_JOBS, { connection });
-export const factExtractionJobs = new Queue(FACT_EXTRACTION, { connection });
+// A turn is interactive: retry a crashed or busy attempt quickly, a few times.
+// Re-running is safe while every tool is read-only (Phase 1).
+export const turnRetryPolicy: JobsOptions = {
+  attempts: 3,
+  backoff: { type: "exponential", delay: 1000 },
+  removeOnComplete: 1000,
+  removeOnFail: 1000,
+};
 
-// The explicit `${provider}:${externalId}` job ID is the webhook idempotency
-// mechanism — never let BullMQ auto-generate an ID here.
-export function addWebhookJob(
-  provider: string,
-  externalId: string,
-  webhookEventId: string,
-): Promise<Job> {
-  return webhookProcessing.add(
-    "process",
-    { webhookEventId },
-    { ...retryPolicy, jobId: `${provider}:${externalId}` },
-  );
-}
+export const conversationTurns = new Queue(CONVERSATION_TURNS, { connection });
+export const maintenanceJobs = new Queue(MAINTENANCE, { connection });
+export const failedJobs = new Queue(FAILED_JOBS, { connection });
+export const factExtractionJobs = new Queue(FACT_EXTRACTION, { connection });
 
 async function noop(job: Job): Promise<void> {
   getLogger().info(
@@ -60,46 +53,20 @@ async function noop(job: Job): Promise<void> {
   );
 }
 
-// Daily repeatable job on agent-triggers; upsert is idempotent across restarts.
-export async function scheduleDormancySweep(): Promise<void> {
-  await agentTriggers.upsertJobScheduler(
-    "dormancy-sweep",
-    { pattern: "0 3 * * *", immediately: false },
-    { name: "dormancy-sweep", data: { sweep: true } },
-  );
-}
+// Schedulers registered by the deleted agent pipeline. Their jobs would now
+// land in the no-op branch every minute, so drop them at boot.
+const OBSOLETE_SCHEDULERS = [
+  "dormancy-sweep",
+  "mail-poll-sweep",
+  "github-poll-sweep",
+  "calendar-poll-sweep",
+  "trigger-tick",
+];
 
-// Fixed-cadence inbox sweep; upserts alongside dormancy on the same scheduler.
-// Cadence is env-driven (MAIL_POLL_CRON, default 1-minute) so cost/latency stays
-// tunable without a redeploy.
-export async function scheduleMailPollSweep(): Promise<void> {
-  await agentTriggers.upsertJobScheduler(
-    "mail-poll-sweep",
-    { pattern: cfg.MAIL_POLL_CRON, immediately: false },
-    { name: "mail-poll-sweep", data: { poll: true } },
-  );
-}
-
-// GitHub open-issue sweep; slower than the mail poll (GITHUB_POLL_CRON, default
-// 15-min) because issues change rarely and every surfaced item costs an LLM
-// triage call.
-export async function scheduleGithubPollSweep(): Promise<void> {
-  await agentTriggers.upsertJobScheduler(
-    "github-poll-sweep",
-    { pattern: cfg.GITHUB_POLL_CRON, immediately: false },
-    { name: "github-poll-sweep", data: { githubPoll: true } },
-  );
-}
-
-// Calendar changed-event sweep (CALENDAR_POLL_CRON, default 1-minute like the
-// mail poll — the cheap per-connection safety net under the calendar webhook,
-// exactly the gmail webhook + mail-poll pairing).
-export async function scheduleCalendarPollSweep(): Promise<void> {
-  await agentTriggers.upsertJobScheduler(
-    "calendar-poll-sweep",
-    { pattern: cfg.CALENDAR_POLL_CRON, immediately: false },
-    { name: "calendar-poll-sweep", data: { calendarPoll: true } },
-  );
+export async function removeObsoleteSchedulers(
+  queue = maintenanceJobs,
+): Promise<void> {
+  for (const id of OBSOLETE_SCHEDULERS) await queue.removeJobScheduler(id);
 }
 
 // Daily github repo-webhook self-heal sweep — re-registers hooks for any
@@ -107,26 +74,16 @@ export async function scheduleCalendarPollSweep(): Promise<void> {
 // restart around the outbox drain). The scheduled job never blocks a fresh
 // connection: connect-time enqueues a one-off github-hook-register job too.
 export async function scheduleGithubHookSweep(): Promise<void> {
-  await agentTriggers.upsertJobScheduler(
+  await maintenanceJobs.upsertJobScheduler(
     "github-hook-sweep",
     { pattern: "0 1 * * *", immediately: false },
     { name: "github-hook-sweep", data: { githubHooks: true } },
   );
 }
 
-// 1-min trigger tick: reuses the agent-triggers queue like the other
-// cheap, low-frequency sweeps — no dedicated queue.
-export async function scheduleTriggerTick(): Promise<void> {
-  await agentTriggers.upsertJobScheduler(
-    "trigger-tick",
-    { pattern: TRIGGER_TICK_CRON, immediately: false },
-    { name: "trigger-tick", data: { triggers: true } },
-  );
-}
-
 // Daily gmail watch renewal sweep — re-registers watches nearing expiry.
 export async function scheduleWatchRenewal(): Promise<void> {
-  await agentTriggers.upsertJobScheduler(
+  await maintenanceJobs.upsertJobScheduler(
     "watch-renewal",
     { pattern: "0 2 * * *", immediately: false },
     { name: "watch-renewal", data: { renew: true } },
@@ -136,37 +93,25 @@ export async function scheduleWatchRenewal(): Promise<void> {
 // Daily connection canary — exercises gmail apiRequest so a silent break in
 // the provider's proxy transport is caught by a job, not a user.
 export async function scheduleConnectionCanary(): Promise<void> {
-  await agentTriggers.upsertJobScheduler(
+  await maintenanceJobs.upsertJobScheduler(
     "connection-canary",
     { pattern: "0 4 * * *", immediately: false },
     { name: "connection-canary", data: { canary: true } },
   );
 }
+
 export async function scheduleFactExtractionSweep(): Promise<void> {
-  await agentTriggers.upsertJobScheduler(
+  await maintenanceJobs.upsertJobScheduler(
     "fact-extraction-sweep",
     { pattern: cfg.FACT_SWEEP_CRON, immediately: false },
     { name: "fact-extraction-sweep", data: { facts: true } },
   );
 }
 
-// agent-triggers processor: dormancy + mail-poll sweeps are the only real jobs.
-// Exported so tests can exercise it on a throwaway queue (the real
-// agent-triggers queue may be consumed by a live dev worker during tests).
-export async function agentTriggerProcessor(job: Job): Promise<void> {
+// Maintenance processor: integration upkeep and the fact-extraction sweep.
+// Exported so tests can exercise it on a throwaway queue.
+export async function maintenanceProcessor(job: Job): Promise<void> {
   switch (job.name) {
-    case "dormancy-sweep":
-      await runDormancySweep();
-      return;
-    case "mail-poll-sweep":
-      await pollImportantMail();
-      return;
-    case "github-poll-sweep":
-      await pollGithubActivity();
-      return;
-    case "calendar-poll-sweep":
-      await pollCalendarActivity();
-      return;
     case "github-hook-sweep":
       await runGithubHookSweep();
       return;
@@ -175,11 +120,9 @@ export async function agentTriggerProcessor(job: Job): Promise<void> {
       // this user right now, not at the next daily sweep.
       {
         const { userId } = (job.data ?? {}) as { userId?: string };
-        if (userId) await registerGithubWebhooksForUser(githubRequestFor, userId);
+        if (userId)
+          await registerGithubWebhooksForUser(githubRequestFor, userId);
       }
-      return;
-    case "trigger-tick":
-      await runTriggerSweep();
       return;
     case "watch-renewal":
       await runWatchRenewal();
@@ -194,6 +137,7 @@ export async function agentTriggerProcessor(job: Job): Promise<void> {
       return noop(job);
   }
 }
+
 export async function factExtractionProcessor(job: Job): Promise<void> {
   const { conversationId } = (job.data ?? {}) as { conversationId?: string };
   if (!conversationId) {
@@ -211,7 +155,7 @@ export function wireDlq<D, R, N extends string>(worker: Worker<D, R, N>): void {
     // Guard against non-terminal 'failed' emissions (if any): only move a job
     // to the DLQ once its retries are actually exhausted.
     if (!job || job.attemptsMade < (job.opts.attempts ?? 1)) return;
-    failedAgentJobs
+    failedJobs
       .add("failed", {
         queue: worker.name,
         jobId: job.id,
@@ -234,13 +178,16 @@ export function wireDlq<D, R, N extends string>(worker: Worker<D, R, N>): void {
 
 export function startWorkers(): Worker[] {
   const registrations: Array<
-    [Queue, (job: Job) => Promise<unknown>, { concurrency?: number }]
+    [
+      Queue,
+      (job: Job, token?: string) => Promise<unknown>,
+      { concurrency?: number },
+    ]
   > = [
-    [agentJobs, executeAgent, { concurrency: 10 }],
-    [onceJobs, executeOnce, { concurrency: 10 }],
-    [agentTriggers, agentTriggerProcessor, { concurrency: 20 }],
-    [webhookProcessing, noop, {}],
-    [emailJobs, sendEmailJob, { concurrency: 5 }],
+    // Turns for different conversations run in parallel; the harness itself
+    // serializes turns within one conversation.
+    [conversationTurns, turnProcessor, { concurrency: 20 }],
+    [maintenanceJobs, maintenanceProcessor, { concurrency: 20 }],
     [factExtractionJobs, factExtractionProcessor, { concurrency: 4 }],
   ];
 
@@ -248,10 +195,10 @@ export function startWorkers(): Worker[] {
   for (const [queue, processor, workerOpts] of registrations) {
     // Thread jobId through every log line in the job's lifecycle (the api does the
     // same for requestId). ALS carries it down the async chain.
-    const withContext: (job: Job) => Promise<unknown> = (job) =>
+    const withContext = (job: Job, token?: string): Promise<unknown> =>
       new Promise((resolve, reject) => {
         runWithContext({ jobId: String(job.id), queue: queue.name }, () => {
-          processor(job).then(resolve, reject);
+          processor(job, token).then(resolve, reject);
         });
       });
     const worker = new Worker(queue.name, withContext, {

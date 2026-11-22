@@ -7,7 +7,7 @@ import {
   readdirSync,
   mkdirSync,
 } from "node:fs";
-import { loadEnv } from "./intent-iteration/_env.js";
+import { loadEnv } from "./_env.js";
 import { newRunId, requireDB, requireLiveLLM } from "./eval/lib.js";
 
 // Self-comparative only: this score is NOT a claim of parity with any vendor's

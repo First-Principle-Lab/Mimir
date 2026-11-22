@@ -128,6 +128,37 @@ jobs:
           CI: "true"
         run: bun run eval-retrieval
 
+  harness-gate:
+    name: read-only harness scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - name: Check for API key
+        id: key
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::notice::OPENROUTER_API_KEY is not set; live harness scenarios skipped (scripted tests still run)."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.run == 'true'
+      - uses: oven-sh/setup-bun@v2
+        if: steps.key.outputs.run == 'true'
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install
+        if: steps.key.outputs.run == 'true'
+        run: bun install --frozen-lockfile
+      - name: Evaluate the interaction model with synthetic read tools
+        if: steps.key.outputs.run == 'true'
+        env:
+          CI: "true"
+        run: bun run eval-harness
+
   docker:
     name: docker image (${{ matrix.app }})
     # Image builds are slow; run them on the way to staging and main (production) only.
