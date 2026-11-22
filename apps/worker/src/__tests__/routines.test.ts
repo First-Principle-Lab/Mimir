@@ -203,3 +203,37 @@ test("idle wakes once per period of inactivity and routine management is owner-s
     ),
   ).rejects.toThrow("Routine not found");
 });
+
+test("a queued fire from an old timing cannot wake a revised or disabled routine", async () => {
+  const routine = await prisma.routine.create({
+    data: {
+      conversationId,
+      userId,
+      instruction: "Revised reminder",
+      source: "schedule",
+      query: {},
+      timing: { type: "interval", everyMs: 120000 },
+    },
+  });
+  const job = {
+    data: { routineId: routine.id, timingKey: "previous-timing-key" },
+    id: "stale-fire",
+    timestamp: Date.now(),
+  };
+  await runRoutine(job);
+  expect(
+    await prisma.routineObservation.count({
+      where: { routineId: routine.id },
+    }),
+  ).toBe(0);
+  await prisma.routine.update({
+    where: { id: routine.id },
+    data: { status: "disabled" },
+  });
+  await runRoutine({ ...job, data: { routineId: routine.id } });
+  expect(
+    await prisma.routineObservation.count({
+      where: { routineId: routine.id },
+    }),
+  ).toBe(0);
+});

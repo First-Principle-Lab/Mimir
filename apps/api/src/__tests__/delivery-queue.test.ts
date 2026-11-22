@@ -123,3 +123,74 @@ test("quiet hours defer ambient delivery; low notifications form one digest", as
     rows.map((r) => r.id),
   );
 });
+
+test("a client ACK during transport is preserved when the sender settles", async () => {
+  const row = await delivery();
+  let accept!: () => void;
+  const pendingPush = new Promise<number>((resolve) => {
+    accept = () => resolve(1);
+  });
+  let started!: () => void;
+  const transportStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const sending = drainDeliveries({
+    userId,
+    now: new Date(Date.now() + 1000),
+    emit: () => 0,
+    push: async () => {
+      started();
+      return pendingPush;
+    },
+  });
+  await transportStarted;
+  try {
+    await acknowledgeDelivery(userId, [row.id]);
+  } finally {
+    accept();
+    await sending;
+  }
+  const settled = await prisma.delivery.findUniqueOrThrow({
+    where: { id: row.id },
+  });
+  expect(settled.status).toBe("delivered");
+  expect(settled.leaseToken).toBeNull();
+  expect(
+    await prisma.deliveryReceipt.count({
+      where: { deliveryId: row.id, channel: "client" },
+    }),
+  ).toBe(1);
+});
+
+test("a crashed sender is recovered only after its lease expires", async () => {
+  const row = await delivery();
+  const now = new Date(Date.now() + 1000);
+  await prisma.delivery.update({
+    where: { id: row.id },
+    data: {
+      status: "sending",
+      leaseToken: "crashed-sender",
+      leaseUntil: new Date(now.getTime() + 30_000),
+    },
+  });
+  let pushes = 0;
+  const options = {
+    userId,
+    emit: () => 0,
+    push: async () => {
+      pushes++;
+      return 1;
+    },
+  };
+  await drainDeliveries({ ...options, now });
+  expect(pushes).toBe(0);
+  await drainDeliveries({ ...options, now: new Date(now.getTime() + 30_001) });
+  expect(pushes).toBe(1);
+  expect(
+    (
+      await prisma.delivery.findUniqueOrThrow({
+        where: { id: row.id },
+      })
+    ).status,
+  ).toBe("delivered");
+});

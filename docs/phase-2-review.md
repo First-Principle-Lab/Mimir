@@ -80,3 +80,18 @@ Required PR CI remains the final completion gate; evidence is recorded below.
   no eval branch was amended, merged, rebased or deleted.
 - Subsequent changes only record this evidence. Required CI on the feature PR's
   latest head must pass before Phase 2 is marked complete or Phase 3 begins.
+
+## Follow-up review
+
+The follow-up audit rechecked the requirement matrix against intake, pi turn
+ownership and steering, response tools, delivery leases and receipts, routine
+observations, scheduler synchronization, migration and web reply correlation.
+No additional implementation defect was found. Three regression tests now cover
+an ACK arriving during an active delivery, recovery after a sender's lease
+expires, and stale fires after a routine's timing changes or it is disabled.
+
+Frozen install, lint, typecheck, all **230 tests** (forced uncached), duplication
+check and the static export pass. The runtime, prompts and tool descriptions are
+unchanged from the published 23/23 inference run. Required CI passed on
+`8baa55a5b5bb47bd6072dc9cfdf092a2364846f6`; the added tests must also pass on the
+latest PR head before advancing to Phase 3.
