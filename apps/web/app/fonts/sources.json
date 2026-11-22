@@ -1,0 +1,14 @@
+[
+  {
+    "file": "Archivo.woff2",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/archivo/Archivo%5Bwdth%2Cwght%5D.ttf",
+    "sourceSha256": "0e094a7d3c7c4c25cf1310c4b30014f1dae9332220b1c2c88f4fa996f0b05053",
+    "woff2Sha256": "c50ef37dc3c01dff693f3ccffa4a92cb16a1ad3141f61ab6e11e761885b5e4c0"
+  },
+  {
+    "file": "DM_Sans.woff2",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/dmsans/DMSans%5Bopsz%2Cwght%5D.ttf",
+    "sourceSha256": "8cd08d97e89c24d0aa92edd2f0f4c8ee6195eee9b7c9f154865a58b02f0c1c0d",
+    "woff2Sha256": "7be3da06aef9dc9e9b6b784d7c7515abadf9457fd1a96fc2246c78755de6c09a"
+  }
+]

@@ -2,8 +2,9 @@
 
 Scope: the full safe-write phase across ToolSpecs and pi, provider transports,
 approval intake/UI, durable inbox resumption, action recovery, migration and
-visible output. Phase 4 has not started. The completion gate is pending the
-published full real-inference evaluation and required PR CI.
+visible output. Phase 4 has not started. The requirement audit, scripted checks
+and published real-inference evaluation pass. Required CI and final completion
+status are recorded in [PR #5](https://github.com/First-Principle-Lab/Mimir/pull/5).
 
 ## Requirement audit
 
@@ -63,6 +64,12 @@ published full real-inference evaluation and required PR CI.
     live scenario injects instructions after provider acceptance and checks that
     the attempt stays interrupted, no further action/card appears, replay does
     not repeat it and the user is told to verify the uncertain outcome.
+12. CI's fresh web build exposed a failure in Next's Google Fonts download path
+    that the local font cache had hidden. A clean Webpack build also reproduced
+    the font-loader failure. Archivo and DM Sans are now local WOFF2 assets with
+    their SIL licenses and source checksums, retaining the existing families,
+    CSS variables and weights. The default Turbopack static build passes without
+    the old cache. No agent behavior changed after the passing evaluation.
 
 ## Verification and limits
 
@@ -89,13 +96,27 @@ published full real-inference evaluation and required PR CI.
 
 ## Published evidence
 
-Pending a fresh full harness run and required PR CI. The initial published run
-on `e8ac502` is preserved as
+The passing run is
+[`eval/2026-11-22-harness-phase-3-safe-writes-completion-review-5`](https://github.com/First-Principle-Lab/Mimir/tree/eval/2026-11-22-harness-phase-3-safe-writes-completion-review-5).
+It tests commit `51d8ff0e439e037c0d2e2bc8e45900d5c941cd84` with actual OpenRouter
+inference using `~deepseek/deepseek-v4-flash-latest`:
+
+- **33/33 scenarios pass:** 12 Phase 1, 11 Phase 2 and 10 Phase 3 cases.
+- **12/12 red-team checks pass.** Crash/replay checks observe no duplicated effect.
+- HTTP intake, BullMQ, pi, journals, exact-argument approvals, same-run resumption
+  and authenticated socket delivery run through the implemented path. Account
+  reads and provider/browser responses are synthetic; no real account is changed.
+- The subsequent changes package local web fonts and record this evidence. The
+  API, worker, tools, prompts, migrations and evaluation code match the tested
+  commit. PR #5 tracks the required CI gate for the final head.
+
+Earlier immutable runs retain the findings and their fixes. The initial run on
+`e8ac502` is preserved as
 `eval/2026-11-22-harness-phase-3-safe-writes-completion-review` (31/32 scenarios;
 the digest-clock evaluation finding above). The `-2` run on `b16d48a` records the
 two read-only scoring findings (10/12 Phase 1 scenarios; later groups did not
 run). The `-3` run on `8182a80` passes 32/32 scenarios and all 12 red-team checks;
 the `-4` run on `9356fca` records the additional refusal-scoring finding (11/12
-Phase 1 scenarios; later groups did not run). The error-path fix above requires
-fresh published evidence. Earlier exploratory checks do not replace the
-published completion gate.
+Phase 1 scenarios; later groups did not run). The final `-5` run includes every
+fix and the additional provider-error scenario. Earlier exploratory checks do
+not replace this passing published gate.

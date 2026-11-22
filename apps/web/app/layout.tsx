@@ -1,16 +1,18 @@
 import type { Metadata } from "next";
-import { Archivo, DM_Sans } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 
-const dmSans = DM_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500"],
+const dmSans = localFont({
+  src: "./fonts/DM_Sans.woff2",
+  weight: "400 500",
+  display: "swap",
   variable: "--font-dm-sans",
 });
 
-const archivo = Archivo({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+const archivo = localFont({
+  src: "./fonts/Archivo.woff2",
+  weight: "400 700",
+  display: "swap",
   variable: "--font-archivo",
 });
 
