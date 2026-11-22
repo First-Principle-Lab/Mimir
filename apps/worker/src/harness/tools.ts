@@ -40,6 +40,9 @@ export type ToolRisk =
 export interface ToolRunContext {
   userId: string;
   conversationId: string;
+  runId?: string;
+  toolCallId?: string;
+  signal?: AbortSignal;
 }
 
 export interface ToolSpec {

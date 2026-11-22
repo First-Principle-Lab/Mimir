@@ -7,7 +7,13 @@ self.addEventListener("push", (event) => {
   } catch {
     data = { title: "Mimir", body: event.data ? event.data.text() : "" };
   }
-  event.waitUntil(self.registration.showNotification(data.title, { body: data.body, icon: "/icon.png" }));
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: "/icon.png",
+      tag: data.tag,
+    }),
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {

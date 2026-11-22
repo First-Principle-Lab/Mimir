@@ -10,11 +10,12 @@ is implemented and reviewed in PR #3. The review fixes trust-boundary, lock,
 session-opening, model-limit, streaming and DST findings and evaluates actual
 inference through HTTP intake, BullMQ, durable journals and socket delivery.
 The full requirement/evidence matrix is in [the Phase 1 review](docs/phase-1-review.md).
-Completion requires its published real-inference run and required CI on the latest
-PR head. Phases 2–6 have not started. Background watching and writes are unavailable;
+Phase 1's published real-inference run and required CI passed; PR #3 is merged into
+`dev`. Phase 2 is implemented and under its [completion review](docs/phase-2-review.md),
+with its 23/23 real-inference run passing and PR CI still pending. Phases 3–6 have not started. External writes are unavailable;
 existing chats retain their latest 50 text messages on first pi use and durable
-facts are preserved. The Phase 0 harness runner is included with Phase 1; inbox
-scenario groups arrive with Phase 2.
+facts are preserved. Phase 2 adds inbox/notification scenarios, durable reminders
+and read-only watchers to the Phase 0/1 harness runner.
 
 ## Decisions
 
@@ -56,19 +57,19 @@ web / desktop ──HTTP──▶ api ──enqueue input──▶ BullMQ ──
 
 How Mimir maps onto pi:
 
-| Need | pi mechanism | Mimir side |
-|---|---|---|
-| One conversation's agent | `createAgentSession()` per conversation | `SessionHost` in the worker keeps active sessions in memory and evicts idle ones |
-| Durable history | `SessionManager.inMemory()` hydrated from stored entries | `session_entry` table; every `message_end` is persisted before it is delivered |
-| No coding tools | `noTools` | Only Mimir tools are registered |
-| Tools | inline extension, `pi.registerTool()` | `ToolSpec` registry (risk tier, idempotency, output budget, provenance) |
-| Policy gate | `pi.on("tool_call")` can return `{ block, reason }` | Fixed tier rules → taint rule → later a reviewer model |
-| "Ask the user" | `session.bindExtensions({ uiContext })` | `confirm` → approval card, `select` → choice card, sent over the socket |
-| New message mid-task | `session.steer()` / `session.followUp()` / `session.abort()` | Per-conversation inbox with debounce; "stop" → `abort()` |
-| Streaming | `session.subscribe()` events | Forwarded to socket.io; `agent_settled` closes the turn |
-| MCP / deferred tools | `createMcpExtension()`, `createToolSearchExtension()` | Per-user Composio and custom MCP servers injected from the database |
-| Background agents | — (in-process children die with the process) | `agent_run` rows + BullMQ jobs; results posted back to the parent's inbox |
-| Models | `pi-ai` model runtime | OpenRouter; models per role in `model-config.json` |
+| Need                     | pi mechanism                                                 | Mimir side                                                                       |
+| ------------------------ | ------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| One conversation's agent | `createAgentSession()` per conversation                      | `SessionHost` in the worker keeps active sessions in memory and evicts idle ones |
+| Durable history          | `SessionManager.inMemory()` hydrated from stored entries     | `session_entry` table; every `message_end` is persisted before it is delivered   |
+| No coding tools          | `noTools`                                                    | Only Mimir tools are registered                                                  |
+| Tools                    | inline extension, `pi.registerTool()`                        | `ToolSpec` registry (risk tier, idempotency, output budget, provenance)          |
+| Policy gate              | `pi.on("tool_call")` can return `{ block, reason }`          | Fixed tier rules → taint rule → later a reviewer model                           |
+| "Ask the user"           | `session.bindExtensions({ uiContext })`                      | `confirm` → approval card, `select` → choice card, sent over the socket          |
+| New message mid-task     | `session.steer()` / `session.followUp()` / `session.abort()` | Per-conversation inbox with debounce; "stop" → `abort()`                         |
+| Streaming                | `session.subscribe()` events                                 | Forwarded to socket.io; `agent_settled` closes the turn                          |
+| MCP / deferred tools     | `createMcpExtension()`, `createToolSearchExtension()`        | Per-user Composio and custom MCP servers injected from the database              |
+| Background agents        | — (in-process children die with the process)                 | `agent_run` rows + BullMQ jobs; results posted back to the parent's inbox        |
+| Models                   | `pi-ai` model runtime                                        | OpenRouter; models per role in `model-config.json`                               |
 
 **Only one run per conversation at a time** (Redis lock). The API never runs the model: it writes the
 input, enqueues it, and returns.
@@ -142,7 +143,7 @@ resolved findings, actual-inference evaluation and required CI described in the
 - Debounce bursts (1–3 s quiet window, with a maximum wait); steer at the next tool boundary;
   "stop" → abort
 - The harness decides whether a reply is owed: a user input requires one. Background turns run in
-  *ambient* mode and may speak only through `send_to_user(text, urgency, reason_code)`, or stay silent
+  _ambient_ mode and may speak only through `send_to_user(text, urgency, reason_code)`, or stay silent
   with `NO_REPLY`. One recovery retry for an empty reply; one nudge for undelivered text.
 - Delivery queue with receipts on top of the outbox and web push; quiet hours and digests at delivery
 - Watchers become one BullMQ job per routine with a scratch row, a cheap check before waking the model,
@@ -208,16 +209,16 @@ and memory scope.
 
 ## Testing
 
-| Layer | Tool | Runs |
-|---|---|---|
-| Unit | `bun test` per workspace | Every PR and push (CI `checks` job) |
-| Integration (Postgres + Redis) | `bun test`, real pgvector + Redis service containers | Every PR and push |
-| Lint / typecheck / build | ESLint, `tsc`, `turbo build` | Every PR and push |
-| Harness scenarios | `evals/harness` runner, deterministic scoring; LLM judge only for tone | PRs touching the harness (Phase 0 onward); results published to `eval/...` branches |
-| Memory retrieval gate | `scripts/eval-retrieval.ts` | Every PR when the `OPENROUTER_API_KEY` secret is set |
-| Red-team / injection | `apps/worker/src/redteam.ts` | Phase 3 onward, as an eval suite |
-| Crash injection | kill the worker mid-tool and resume | Phase 3 onward |
-| Real-LLM end-to-end | tests that skip without `OPENROUTER_API_KEY` | Eval runs and staging |
+| Layer                          | Tool                                                                   | Runs                                                                                |
+| ------------------------------ | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Unit                           | `bun test` per workspace                                               | Every PR and push (CI `checks` job)                                                 |
+| Integration (Postgres + Redis) | `bun test`, real pgvector + Redis service containers                   | Every PR and push                                                                   |
+| Lint / typecheck / build       | ESLint, `tsc`, `turbo build`                                           | Every PR and push                                                                   |
+| Harness scenarios              | `evals/harness` runner, deterministic scoring; LLM judge only for tone | PRs touching the harness (Phase 0 onward); results published to `eval/...` branches |
+| Memory retrieval gate          | `scripts/eval-retrieval.ts`                                            | Every PR when the `OPENROUTER_API_KEY` secret is set                                |
+| Red-team / injection           | `apps/worker/src/redteam.ts`                                           | Phase 3 onward, as an eval suite                                                    |
+| Crash injection                | kill the worker mid-tool and resume                                    | Phase 3 onward                                                                      |
+| Real-LLM end-to-end            | tests that skip without `OPENROUTER_API_KEY`                           | Eval runs and staging                                                               |
 
 Rules: every PR adds or updates tests for what it changes; a PR that changes agent behavior links the
 `eval/...` branch of its eval run.

@@ -461,6 +461,432 @@ describe("runTurn", () => {
   });
 });
 
+describe("Phase Two inbox and response rules", () => {
+  async function isolated(work: (id: string) => Promise<void>) {
+    const c = await prisma.conversation.create({ data: { userId } });
+    try {
+      await work(c.id);
+    } finally {
+      await prisma.outboxEvent.deleteMany({
+        where: { payload: { path: ["conversationId"], equals: c.id } },
+      });
+      await prisma.message.deleteMany({ where: { conversationId: c.id } });
+      await prisma.conversation.delete({ where: { id: c.id } });
+    }
+  }
+  async function input(id: string, text: string, control?: "stop") {
+    const message = await prisma.message.create({
+      data: { conversationId: id, role: "user", content: text },
+    });
+    const row = await prisma.inboxInput.create({
+      data: {
+        conversationId: id,
+        kind: "user",
+        source: "user:test",
+        messageId: message.id,
+        dedupeKey: message.id,
+        payload: { kind: "user", text, ...(control ? { control } : {}) },
+        createdAt: new Date(Date.now() - 2000),
+      },
+    });
+    return { message, row };
+  }
+  test("a burst gets one answer linked to every input and replay does no inference", async () =>
+    isolated(async (id) => {
+      const a = await input(id, "what is 2 plus 2?");
+      const b = await input(id, "also what is 3 plus 3?");
+      faux.setResponses([reply([fauxText("4 and 6.")])]);
+      await runTurn({ conversationId: id, userId, messageId: b.message.id });
+      const messages = await prisma.message.findMany({
+        where: { conversationId: id, role: "assistant" },
+      });
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.replyToMessageIds).toEqual([
+        a.message.id,
+        b.message.id,
+      ]);
+      expect(
+        await prisma.inboxInput.count({
+          where: { conversationId: id, status: "consumed" },
+        }),
+      ).toBe(2);
+      await runTurn({ conversationId: id, userId, messageId: a.message.id });
+      expect(
+        await prisma.agentRun.count({ where: { conversationId: id } }),
+      ).toBe(1);
+    }));
+  test("an empty chat answer gets exactly one recovery attempt", async () =>
+    isolated(async (id) => {
+      const a = await input(id, "answer please");
+      faux.setResponses([reply([]), reply([fauxText("Recovered answer.")])]);
+      await runTurn({ conversationId: id, userId, messageId: a.message.id });
+      expect((await replyTo(a.message.id))[0]!.content).toBe(
+        "Recovered answer.",
+      );
+      expect(
+        (
+          await prisma.agentRun.findUniqueOrThrow({
+            where: { inputMessageId: a.message.id },
+          })
+        ).steps,
+      ).toBe(2);
+    }));
+  test("nothing-new agent results remain silent with no delivery or deltas", async () =>
+    isolated(async (id) => {
+      const { postInbox } = await import("@mimir/backend-core");
+      const inputId = await postInbox({
+        conversationId: id,
+        userId,
+        source: "worker:test",
+        dedupeKey: "nothing-new",
+        payload: {
+          kind: "agent_result",
+          agentRunId: "child",
+          status: "succeeded",
+          text: "No changes.",
+        },
+      });
+      faux.setResponses([reply([fauxText("NO_REPLY")])]);
+      await runTurn({ conversationId: id, userId, inputId });
+      expect(
+        await prisma.message.count({ where: { conversationId: id } }),
+      ).toBe(0);
+      expect(
+        await prisma.delivery.count({ where: { conversationId: id } }),
+      ).toBe(0);
+      expect(
+        (await prisma.inboxInput.findUniqueOrThrow({ where: { id: inputId } }))
+          .status,
+      ).toBe("consumed");
+    }));
+  test("ambient prose gets one nudge; only the notification tool reaches delivery", async () =>
+    isolated(async (id) => {
+      const { postInbox } = await import("@mimir/backend-core");
+      const inputId = await postInbox({
+        conversationId: id,
+        userId,
+        source: "worker:test",
+        dedupeKey: "completed",
+        payload: {
+          kind: "agent_result",
+          agentRunId: "child",
+          status: "succeeded",
+          text: "Requested research complete: answer 42.",
+        },
+      });
+      faux.setResponses([
+        reply([fauxText("Research done.")]),
+        reply(
+          [
+            fauxToolCall("send_to_user", {
+              text: "The answer is 42.",
+              urgency: "normal",
+              reason_code: "task_completed",
+            }),
+          ],
+          { stopReason: "toolUse" },
+        ),
+        reply([fauxText("NO_REPLY")]),
+      ]);
+      await runTurn({ conversationId: id, userId, inputId });
+      expect(
+        (await prisma.message.findMany({ where: { conversationId: id } })).map(
+          (m) => m.content,
+        ),
+      ).toEqual(["The answer is 42."]);
+      expect(
+        await prisma.delivery.count({
+          where: { conversationId: id, ambient: true },
+        }),
+      ).toBe(1);
+      const run = await prisma.agentRun.findUniqueOrThrow({
+        where: { inboxInputId: inputId },
+      });
+      expect(
+        await prisma.actionAttempt.count({
+          where: {
+            runId: run.id,
+            toolName: "send_to_user",
+            status: "succeeded",
+          },
+        }),
+      ).toBe(1);
+    }));
+  test("new user corrections steer at the tool boundary", async () =>
+    isolated(async (id) => {
+      const a = await input(id, "read the slow source");
+      let entered!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((r) => {
+        entered = r;
+      });
+      const held = new Promise<void>((r) => {
+        release = r;
+      });
+      seen.length = 0;
+      faux.setResponses([
+        reply([fauxToolCall("slow_read", {})], { stopReason: "toolUse" }),
+        reply([fauxText("Applied your correction.")]),
+      ]);
+      const running = runTurn(
+        { conversationId: id, userId, messageId: a.message.id },
+        {
+          readTools: async () => [
+            {
+              name: "slow_read",
+              label: "Slow read",
+              description: "Read source",
+              parameters: { type: "object", properties: {} },
+              risk: "read_private",
+              sideEffect: "none",
+              idempotent: true,
+              provenance: "test",
+              resultTrust: "untrusted",
+              outputMaxChars: 1000,
+              execute: async () => {
+                entered();
+                await held;
+                return "result";
+              },
+            },
+          ],
+        },
+      );
+      await started;
+      const b = await input(id, "Correction: use the updated value.");
+      await Bun.sleep(250);
+      release();
+      await running;
+      expect(seen.at(-1)!.messages.map(textOf).join("\n")).toContain(
+        "Correction: use the updated value.",
+      );
+      const answer = (
+        await prisma.message.findMany({
+          where: { conversationId: id, role: "assistant" },
+        })
+      )[0]!;
+      expect(answer.replyToMessageIds).toEqual([a.message.id, b.message.id]);
+    }));
+  test("stop aborts a blocked tool and settles every covered user input", async () =>
+    isolated(async (id) => {
+      const a = await input(id, "read the blocked source");
+      let entered!: () => void;
+      const started = new Promise<void>((r) => {
+        entered = r;
+      });
+      faux.setResponses([
+        reply([fauxToolCall("blocked_read", {})], { stopReason: "toolUse" }),
+      ]);
+      const running = runTurn(
+        { conversationId: id, userId, messageId: a.message.id },
+        {
+          readTools: async () => [
+            {
+              name: "blocked_read",
+              label: "Blocked read",
+              description: "Read source",
+              parameters: { type: "object", properties: {} },
+              risk: "read_private",
+              sideEffect: "none",
+              idempotent: true,
+              provenance: "test",
+              resultTrust: "untrusted",
+              outputMaxChars: 1000,
+              execute: async () => {
+                entered();
+                return new Promise(() => {});
+              },
+            },
+          ],
+        },
+      );
+      await started;
+      const stop = await input(id, "stop", "stop");
+      await running;
+      const answer = (await replyTo(a.message.id))[0]!;
+      expect(answer.content).toBe("Stopped.");
+      expect(answer.replyToMessageIds).toContain(stop.message.id);
+      expect(
+        (
+          await prisma.agentRun.findUniqueOrThrow({
+            where: { inputMessageId: a.message.id },
+          })
+        ).status,
+      ).toBe("interrupted");
+    }));
+  test("a user-prioritized ambient job leaves a durable wake for its pending result", async () =>
+    isolated(async (id) => {
+      const { postInbox } = await import("@mimir/backend-core");
+      const inputId = await postInbox({
+        conversationId: id,
+        userId,
+        source: "worker:test",
+        dedupeKey: "pending-result",
+        payload: {
+          kind: "agent_result",
+          agentRunId: "child",
+          status: "succeeded",
+          text: "Nothing new.",
+        },
+      });
+      await input(id, "hello");
+      faux.setResponses([
+        reply([fauxText("Hi.")]),
+        reply([fauxText("NO_REPLY")]),
+      ]);
+      await runTurn({ conversationId: id, userId, inputId });
+      expect(
+        (await prisma.inboxInput.findUniqueOrThrow({ where: { id: inputId } }))
+          .status,
+      ).toBe("pending");
+      const wake = await prisma.outboxEvent.findFirst({
+        where: {
+          eventType: "conversation_turn",
+          payload: { path: ["inputId"], equals: inputId },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      expect(wake!.payload).toHaveProperty("wakeId");
+      await runTurn({ conversationId: id, userId, inputId });
+      expect(
+        (await prisma.inboxInput.findUniqueOrThrow({ where: { id: inputId } }))
+          .status,
+      ).toBe("consumed");
+    }));
+  test("canceled routine fires do not wake the model", async () =>
+    isolated(async (id) => {
+      const { postInbox } = await import("@mimir/backend-core");
+      const routine = await prisma.routine.create({
+        data: {
+          conversationId: id,
+          userId,
+          instruction: "Canceled reminder",
+          source: "schedule",
+          query: {},
+          timing: { type: "interval", everyMs: 60000 },
+          status: "disabled",
+        },
+      });
+      const inputId = await postInbox({
+        conversationId: id,
+        userId,
+        source: "routine:test",
+        dedupeKey: "canceled",
+        payload: {
+          kind: "routine_fire",
+          routineId: routine.id,
+          key: "once",
+          instruction: routine.instruction,
+        },
+      });
+      faux.setResponses([]);
+      await runTurn({ conversationId: id, userId, inputId });
+      expect(
+        await prisma.agentRun.count({ where: { conversationId: id } }),
+      ).toBe(0);
+      expect(
+        (await prisma.inboxInput.findUniqueOrThrow({ where: { id: inputId } }))
+          .status,
+      ).toBe("consumed");
+    }));
+  test("a retained Phase One job reuses its existing run and committed reply", async () =>
+    isolated(async (id) => {
+      const message = await prisma.message.create({
+        data: {
+          conversationId: id,
+          role: "user",
+          content: "old completed input",
+        },
+      });
+      const answer = await prisma.message.create({
+        data: {
+          conversationId: id,
+          role: "assistant",
+          parentMessageId: message.id,
+          content: "Already answered.",
+        },
+      });
+      const run = await prisma.agentRun.create({
+        data: {
+          userId,
+          conversationId: id,
+          trigger: "user_message",
+          inputMessageId: message.id,
+          replyMessageId: answer.id,
+          status: "succeeded",
+        },
+      });
+      faux.setResponses([]);
+      await runTurn({ conversationId: id, userId, messageId: message.id });
+      expect(
+        await prisma.agentRun.count({ where: { conversationId: id } }),
+      ).toBe(1);
+      expect(
+        await prisma.inboxInput.findUniqueOrThrow({
+          where: { messageId: message.id },
+        }),
+      ).toMatchObject({
+        status: "consumed",
+        runId: run.id,
+        replyMessageId: answer.id,
+      });
+    }));
+  test("a tool-registry setup failure still settles the user reply contract", async () =>
+    isolated(async (id) => {
+      const a = await input(id, "please answer");
+      await runTurn(
+        { conversationId: id, userId, messageId: a.message.id },
+        {
+          readTools: async () => {
+            throw new Error("synthetic registry outage");
+          },
+        },
+      );
+      expect((await replyTo(a.message.id))[0]!.content).toContain(
+        "Mind trying again?",
+      );
+      expect(
+        (
+          await prisma.inboxInput.findUniqueOrThrow({
+            where: { messageId: a.message.id },
+          })
+        ).status,
+      ).toBe("consumed");
+    }));
+  test("schedule writes a durable routine and an action-attempt row before promising it", async () =>
+    isolated(async (id) => {
+      const a = await input(id, "remind me later");
+      faux.setResponses([
+        reply(
+          [
+            fauxToolCall("schedule", {
+              action: "add",
+              instruction: "Remind me to stretch",
+              timing: {
+                type: "once",
+                at: new Date(Date.now() + 60_000).toISOString(),
+              },
+            }),
+          ],
+          { stopReason: "toolUse" },
+        ),
+        reply([fauxText("I'll remind you to stretch.")]),
+      ]);
+      await runTurn({ conversationId: id, userId, messageId: a.message.id });
+      expect(
+        await prisma.routine.count({ where: { conversationId: id } }),
+      ).toBe(1);
+      const run = await prisma.agentRun.findUniqueOrThrow({
+        where: { inputMessageId: a.message.id },
+      });
+      expect(
+        await prisma.actionAttempt.count({
+          where: { runId: run.id, toolName: "schedule", status: "succeeded" },
+        }),
+      ).toBe(1);
+    }));
+});
+
 describe("repliesByInput", () => {
   const user = (text: string) => ({
     role: "user",

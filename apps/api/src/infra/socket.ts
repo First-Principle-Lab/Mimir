@@ -4,6 +4,7 @@ import type { Redis } from "ioredis";
 import { Server } from "socket.io";
 import { parseCookies, verifyAccessToken } from "../auth/tokens.js";
 import { deliverToUser } from "./delivery.js";
+import { acknowledgeDelivery, drainDeliveries } from "./delivery-queue.js";
 
 const cfg = getConfig();
 const socketsByUser = new Map<string, Set<string>>();
@@ -39,6 +40,18 @@ export function initSocket(server: HttpServer): void {
     let ids = socketsByUser.get(userId);
     if (!ids) socketsByUser.set(userId, (ids = new Set()));
     ids.add(socket.id);
+    socket.on("delivery_ack", (payload: unknown) => {
+      if (
+        Array.isArray(payload) &&
+        payload.every((id) => typeof id === "string")
+      )
+        void acknowledgeDelivery(userId, payload).catch((err) =>
+          getLogger().warn({ err }, "delivery receipt failed"),
+        );
+    });
+    void drainDeliveries({ userId }).catch((err) =>
+      getLogger().warn({ err }, "reconnect delivery failed"),
+    );
     getLogger().info(
       { userId, socketId: socket.id, open: ids.size },
       "socket connected",
@@ -99,6 +112,12 @@ export function initPubSub(subscriber: Redis): void {
     // Payloads carry their own event name ({event:'new_message',...}); emit on
     // that name so the web client can wire per-event handlers. Falls back to "debug".
     const eventName = typeof parsed.event === "string" ? parsed.event : "debug";
+    if (eventName === "delivery_ready") {
+      void drainDeliveries({ userId }).catch((err) =>
+        getLogger().error({ err }, "delivery wake failed"),
+      );
+      return;
+    }
     if (eventName === "message_delta" || eventName === "turn_settled") {
       emitToUser(userId, eventName, parsed.payload);
       return;

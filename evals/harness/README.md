@@ -26,4 +26,9 @@ Phase 1 covers direct answers, combined requests, hedged phrasing, local dates,
 DST, weekday, invalid zones, discovery, write restrictions, session rehydration
 and legacy-history bootstrap. Scripted tests separately cover protocol faults,
 policy enforcement and ownership. Inbox groups (bursts, mid-task corrections,
-background results, misfired triggers and quiet hours) belong to Phase 2.
+background results, misfired triggers and quiet hours) run in Phase 2 through
+scripts/eval-inbox.ts, included by bun run eval-harness. It also covers stop,
+positive watcher findings, requested reminders, digest delivery and a real delayed
+BullMQ schedule fire. Notification fixture targets are precision/recall 1.0 and
+zero wrongly silent requested replies. Scripted tests cover empty-answer recovery
+and the single delivery nudge without relying on the model to misbehave.

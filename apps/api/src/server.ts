@@ -14,6 +14,7 @@ import { userRouter } from "./routes/user.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { redis } from "./infra/redis.js";
 import { initPubSub, initSocket } from "./infra/socket.js";
+import { startDeliveryQueue } from "./infra/delivery-queue.js";
 
 const config = getConfig();
 const app = express();
@@ -107,6 +108,7 @@ setupExpressErrorHandler(app);
 const server = createServer(app);
 initSocket(server);
 initPubSub(redis.duplicate());
+startDeliveryQueue();
 server.listen(config.PORT, () => {
   getLogger().info({ port: config.PORT }, "@mimir/api listening");
 });

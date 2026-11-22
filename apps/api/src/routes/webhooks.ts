@@ -174,7 +174,7 @@ export function webhooksRouter(opts: {
         status: "connected",
         webhookMeta: { path: ["channelId"], equals: channelId },
       },
-      select: { webhookMeta: true },
+      select: { webhookMeta: true, userId: true },
     });
     const meta = (channel?.webhookMeta ?? {}) as { token?: string };
     if (!channel || !meta.token || !safeEqual(meta.token, token)) {
@@ -185,7 +185,7 @@ export function webhooksRouter(opts: {
     // number, so a re-delivered push (Google retry) is an atomic no-op via the
     // (provider, externalId) unique constraint — the replay guard.
     const externalId = `${channelId}:${messageNumber}`;
-    res.status(200).json(await storeWebhook("googlecalendar", externalId, req.body));
+    res.status(200).json(await storeWebhook("googlecalendar", externalId, { ownerUserId: channel.userId }));
   });
 
   router.post("/slack", async (req, res) => {

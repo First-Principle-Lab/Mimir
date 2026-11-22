@@ -27,6 +27,7 @@ model User {
   passwordHash String?
   googleId     String?  @unique
   timezone     String?
+  notificationPreferences Json?
   createdAt    DateTime @default(now())
 
   conversations     Conversation[]
@@ -56,6 +57,9 @@ model Conversation {
   facts          ExtractedFact[]
   sessionEntries SessionEntry[]
   agentRuns      AgentRun[]
+  inbox          InboxInput[]
+  deliveries     Delivery[]
+  routines       Routine[]
 
   @@index([userId])
 }
@@ -71,6 +75,7 @@ model Message {
   toolCalls        Json?
   attachments      Json?
   parentMessageId  String?
+  replyToMessageIds String[] @default([])
   model            String?
   tokenCount       Int?
   promptTokens     Int?
@@ -201,6 +206,7 @@ model AgentRun {
   user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   trigger          String
   inputMessageId   String?
+  inboxInputId     String? @unique
   replyMessageId   String?
   status           String       @default("running")
   model            String?
@@ -217,6 +223,109 @@ model AgentRun {
   @@unique([inputMessageId])
   @@index([conversationId, startedAt])
   @@index([status])
+}
+
+// Typed inputs are durable independently of BullMQ jobs. A single run can
+// consume a burst and steering inputs; all point at its one covering reply.
+model InboxInput {
+  id             String @id @default(uuid())
+  seq            BigInt @unique @default(autoincrement())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  kind           String
+  source         String
+  payload        Json
+  dedupeKey      String
+  messageId      String? @unique
+  status         String @default("pending")
+  runId          String?
+  replyMessageId String?
+  createdAt      DateTime @default(now())
+  consumedAt     DateTime?
+
+  @@unique([conversationId, dedupeKey])
+  @@index([conversationId, status, seq])
+}
+
+// Delivery is at least once; clients acknowledge delivery IDs and suppress
+// repeats. A receipt records transport acceptance, never claims human reading.
+model Delivery {
+  id             String @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  messageId      String @unique
+  urgency        String
+  reasonCode     String
+  ambient        Boolean
+  status         String @default("pending")
+  availableAt    DateTime @default(now())
+  leaseUntil     DateTime?
+  leaseToken     String?
+  attempts       Int @default(0)
+  createdAt      DateTime @default(now())
+  receipts       DeliveryReceipt[]
+
+  @@index([status, availableAt])
+}
+
+model DeliveryReceipt {
+  id         String @id @default(uuid())
+  deliveryId String
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  channel    String
+  createdAt  DateTime @default(now())
+
+  @@unique([deliveryId, channel])
+}
+
+model Routine {
+  id             String @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  instruction    String @db.Text
+  source         String // schedule | gmail | googlecalendar | github
+  query          Json
+  timing         Json // at | everyMs | cron (+ timezone); idle uses last user activity
+  status         String @default("active")
+  createdAt      DateTime @default(now())
+  scratch        RoutineScratch?
+  observations   RoutineObservation[]
+}
+
+model RoutineObservation {
+  id        String @id @default(uuid())
+  routineId String
+  routine   Routine @relation(fields: [routineId], references: [id], onDelete: Cascade)
+  key       String
+  data      Json
+  createdAt DateTime @default(now())
+
+  @@unique([routineId, key])
+}
+
+model RoutineScratch {
+  routineId      String @id
+  routine        Routine @relation(fields: [routineId], references: [id], onDelete: Cascade)
+  fingerprint    String?
+  checkedAt      DateTime?
+  lastToldKey    String?
+  notes          Json?
+}
+
+// Phase Two internal mutations use this journal too. External writing tools
+// remain disabled until Phase Three adds approval and reconciliation.
+model ActionAttempt {
+  id             String @id @default(uuid())
+  runId          String
+  toolCallId     String
+  toolName       String
+  status         String @default("started")
+  result         Json?
+  createdAt      DateTime @default(now())
+
+  @@unique([runId, toolCallId])
 }
 
 model AgentStep {

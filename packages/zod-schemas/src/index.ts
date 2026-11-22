@@ -11,6 +11,7 @@ export const messageSchema = z.object({
   conversationId: z.string().uuid(),
   content: z.string().min(1),
   clientMessageId: z.string().uuid(),
+  control: z.literal("stop").optional(),
 });
 
 export type MessageRequest = z.infer<typeof messageSchema>;

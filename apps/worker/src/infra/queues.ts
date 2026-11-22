@@ -2,6 +2,7 @@ import {
   CONVERSATION_TURNS,
   getConfig,
   getLogger,
+  getPrismaClient,
   runWithContext,
 } from "@mimir/backend-core";
 import { Queue, Worker, type Job, type JobsOptions } from "bullmq";
@@ -17,6 +18,8 @@ import {
 } from "../integrations/github/github-webhooks.js";
 import { runWatchRenewal } from "../integrations/gmail/watch-renewal.js";
 import { runConnectionCanary } from "../integrations/connection-canary.js";
+import { routineJobs, runRoutine, syncRoutine } from "../routines/routines.js";
+import { publishUserEvent } from "./redis.js";
 
 // Queue name kept from the old pipeline so its existing job schedulers in Redis
 // stay addressable (and removable, see removeObsoleteSchedulers).
@@ -108,10 +111,57 @@ export async function scheduleFactExtractionSweep(): Promise<void> {
   );
 }
 
+export async function scheduleHarnessRecovery(): Promise<void> {
+  await maintenanceJobs.upsertJobScheduler(
+    "harness-recovery",
+    { every: 60_000 },
+    { name: "harness-recovery", data: {} },
+  );
+}
+export async function recoverHarnessWork(): Promise<void> {
+  const prisma = getPrismaClient();
+  const inputs = await prisma.inboxInput.findMany({
+    where: {
+      status: { in: ["pending", "running"] },
+      createdAt: { lt: new Date(Date.now() - 60_000) },
+    },
+    include: { conversation: { select: { userId: true } } },
+    take: 100,
+    orderBy: { seq: "asc" },
+  });
+  for (const input of inputs)
+    await conversationTurns.add(
+      "turn",
+      {
+        conversationId: input.conversationId,
+        userId: input.conversation.userId,
+        inputId: input.id,
+      },
+      {
+        ...turnRetryPolicy,
+        jobId: `recovery-${input.id}-${Math.floor(Date.now() / 60_000)}`,
+      },
+    );
+  const routines = await prisma.routine.findMany({
+    where: { status: "active" },
+    select: { id: true },
+  });
+  for (const routine of routines) await syncRoutine(routine.id);
+}
+
 // Maintenance processor: integration upkeep and the fact-extraction sweep.
 // Exported so tests can exercise it on a throwaway queue.
 export async function maintenanceProcessor(job: Job): Promise<void> {
   switch (job.name) {
+    case "harness-recovery":
+      await recoverHarnessWork();
+      return;
+    case "routine-sync":
+      await syncRoutine(job.data.routineId);
+      return;
+    case "delivery-ready":
+      await publishUserEvent(job.data.userId, "delivery_ready", {});
+      return;
     case "github-hook-sweep":
       await runGithubHookSweep();
       return;
@@ -187,6 +237,7 @@ export function startWorkers(): Worker[] {
     // Turns for different conversations run in parallel; the harness itself
     // serializes turns within one conversation.
     [conversationTurns, turnProcessor, { concurrency: 20 }],
+    [routineJobs, (job) => runRoutine(job), { concurrency: 10 }],
     [maintenanceJobs, maintenanceProcessor, { concurrency: 20 }],
     [factExtractionJobs, factExtractionProcessor, { concurrency: 4 }],
   ];
