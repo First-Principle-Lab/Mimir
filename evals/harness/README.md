@@ -34,14 +34,17 @@ zero wrongly silent requested replies. Scripted tests cover empty-answer recover
 and the single delivery nudge without relying on the model to misbehave.
 
 Phase 3 adds scripts/eval-safe-writes.ts and apps/worker/src/redteam.ts to the
-same harness command. Nine live-model scenarios cover approved email, declined
+same harness command. Ten live-model scenarios cover approved email, declined
 calendar invitations, corrected GitHub cards, Notion, browser forms, tainted
-read-to-send, injected mail, unattended drafts and Composio meta-tools. They use
+read-to-send, injected mail, unattended drafts, Composio meta-tools and an
+accepted-then-failed browser action with an injected provider error. They use
 the production schemas, policy, journals, HTTP card decisions, resumed pi run,
 BullMQ and socket delivery; only provider account responses/browser submissions
 are synthetic. Provider fixtures reject any side effect without a prior journal
 row. The safe-write runner appends tool arguments, risk/reason, action counts and
-run state to the result rows. A single-case exploratory run may set
+run state to the result rows. Draft notifications may join a low-priority digest;
+the delivery clock advances past that window before requiring a socket receipt.
+A single-case exploratory run may set
 EVAL_SAFE_WRITE_SCENARIO; published completion gates run the full suite without it.
 
 Scripted coverage includes an actual SIGKILL after a synthetic provider accepts

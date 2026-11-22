@@ -36,7 +36,7 @@ export const retryPolicy: JobsOptions = {
 };
 
 // A turn is interactive: retry a crashed or busy attempt quickly, a few times.
-// Re-running is safe while every tool is read-only (Phase 1).
+// Reads may repeat; the action journal prevents interrupted writes from retrying.
 export const turnRetryPolicy: JobsOptions = {
   attempts: 3,
   backoff: { type: "exponential", delay: 1000 },

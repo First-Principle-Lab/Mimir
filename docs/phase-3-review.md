@@ -55,10 +55,17 @@ published full real-inference evaluation and required PR CI.
     currently have an email sending tool". Regression tests now accept those
     limitations and still reject fabricated success. The read-only suite also
     explicitly forbids all current write-tool names, including email_send.
+11. The final error-path audit found that a resumed action's provider exception
+    could reach the model without the central untrusted wrapper. A regression
+    reproduced the missing wrapper before the fix. Resumed external actions now
+    taint context before execution and centrally wrap errors too. The additional
+    live scenario injects instructions after provider acceptance and checks that
+    the attempt stays interrupted, no further action/card appears, replay does
+    not repeat it and the user is told to verify the uncertain outcome.
 
 ## Verification and limits
 
-- Frozen install, lint, workspace typecheck, all **252 tests** (forced uncached),
+- Frozen install, lint, workspace typecheck, all **253 tests** (forced uncached),
   duplication check and static web export pass locally. All three evaluation
   scripts pass a focused TypeScript check. Both schema migrations are forward-only.
 - A fresh temporary database was upgraded through Phase 2, seeded with synthetic
@@ -86,4 +93,6 @@ on `e8ac502` is preserved as
 `eval/2026-11-22-harness-phase-3-safe-writes-completion-review` (31/32 scenarios;
 the digest-clock evaluation finding above). The `-2` run on `b16d48a` records the
 two read-only scoring findings (10/12 Phase 1 scenarios; later groups did not
-run). Earlier exploratory checks do not replace the published completion gate.
+run). The `-3` run on `8182a80` passes 32/32 scenarios and all 12 red-team checks;
+the error-path fix above requires fresh published evidence. Earlier exploratory
+checks do not replace the published completion gate.

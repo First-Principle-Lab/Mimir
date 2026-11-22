@@ -83,6 +83,10 @@ export async function resumeApproval(
   });
   if (!claimed.count)
     return "The action already has a decision or is running; do not repeat it.";
+  // A provider may return untrusted text in either its result or its error.
+  // Mark the context before execution, as the normal tool executor does.
+  if (ctx.safety && spec.resultTrust === "untrusted")
+    ctx.safety.tainted = true;
   try {
     const result = await executeJournaled(spec, approval.arguments, {
       ...ctx,
@@ -92,8 +96,6 @@ export async function resumeApproval(
       where: { id: approval.id },
       data: { status: "succeeded" },
     });
-    if (ctx.safety && spec.resultTrust === "untrusted")
-      ctx.safety.tainted = true;
     return (
       "The approved action executed. Report only the actual result:\n" +
       renderToolResult(spec, result)
@@ -104,8 +106,8 @@ export async function resumeApproval(
       data: { status: "interrupted" },
     });
     return (
-      "The approved action was interrupted. Its outcome may be uncertain and it will not be retried automatically. Tell the user to verify with the provider. " +
-      (error instanceof Error ? error.message : "")
+      "The approved action was interrupted. Its outcome may be uncertain and it will not be retried automatically. Tell the user to verify with the provider. Provider error:\n" +
+      renderToolResult(spec, error instanceof Error ? error.message : "")
     );
   }
 }
