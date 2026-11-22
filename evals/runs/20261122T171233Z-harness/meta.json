@@ -1,0 +1,14 @@
+{
+  "topic": "phase 1 completion review end to end",
+  "suite": "harness",
+  "status": "passed",
+  "exitCode": 0,
+  "testedCommit": "180297cc2ac4e330b3cfc9e141420f134ad3e000",
+  "testedRef": "feat/phase1-pi-harness",
+  "branch": "eval/2026-11-22-harness-phase-1-completion-review-end-to-end",
+  "runId": "20261122T171233Z-harness",
+  "startedAt": "2026-11-22T17:12:33Z",
+  "finishedAt": "2026-11-22T17:13:13Z",
+  "runner": "local",
+  "runUrl": null
+}
