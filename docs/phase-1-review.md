@@ -86,3 +86,22 @@ load, or the inbox/background/write features assigned to later phases.
 The immutable evaluation branch and tested commit will be entered here after
 running `scripts/eval/run.sh harness "phase 1 completion review" --push` from the
 clean reviewed commit. Phase 2 must wait for that run and the latest PR CI.
+
+## Published evidence
+
+- Tested implementation commit: `180297cc2ac4e330b3cfc9e141420f134ad3e000`.
+- Model: `~deepseek/deepseek-v4-flash-latest`, real OpenRouter inference.
+- Final result: **12/12 passing scenarios**, including all Phase 1 exit groups,
+  DST, write refusals, discovery, legacy history and session rehydration.
+- Immutable branch: [`eval/2026-11-22-harness-phase-1-completion-review-end-to-end`](https://github.com/First-Principle-Lab/Mimir/tree/eval/2026-11-22-harness-phase-1-completion-review-end-to-end/evals/runs/20261122T171233Z-harness).
+  Its `meta.json` identifies the exact tested SHA; `harness.jsonl` contains
+  per-scenario calls, replies, inference usage and delivery/persistence evidence.
+- Reproduce with local Postgres on 5434, Redis on 6380, `JWT_SECRET`, and
+  `OPENROUTER_API_KEY`: `scripts/eval/run.sh harness "phase 1 completion review end to end" --push`.
+- The subsequent evidence-recording commit changes documentation only. Required
+  CI for the latest PR head is tracked in [PR #3](https://github.com/First-Principle-Lab/Mimir/pull/3).
+
+This evaluates the implemented interaction path with synthetic account data.
+Actual Gmail/Calendar/GitHub/Notion OAuth and provider transports retain their
+separate integration-test coverage; this run does not access personal accounts,
+exercise the rendered browser/Tauri UI, or claim Phase 2 notification behavior.
