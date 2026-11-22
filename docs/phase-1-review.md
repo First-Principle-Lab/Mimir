@@ -83,12 +83,6 @@ load, or the inbox/background/write features assigned to later phases.
 
 ## Published evidence
 
-The immutable evaluation branch and tested commit will be entered here after
-running `scripts/eval/run.sh harness "phase 1 completion review" --push` from the
-clean reviewed commit. Phase 2 must wait for that run and the latest PR CI.
-
-## Published evidence
-
 - Tested implementation commit: `180297cc2ac4e330b3cfc9e141420f134ad3e000`.
 - Model: `~deepseek/deepseek-v4-flash-latest`, real OpenRouter inference.
 - Final result: **12/12 passing scenarios**, including all Phase 1 exit groups,
@@ -105,3 +99,14 @@ This evaluates the implemented interaction path with synthetic account data.
 Actual Gmail/Calendar/GitHub/Notion OAuth and provider transports retain their
 separate integration-test coverage; this run does not access personal accounts,
 exercise the rendered browser/Tauri UI, or claim Phase 2 notification behavior.
+
+## CI checkpoint
+
+Both required checks passed on `8a29fa081e3090fb678d1295354f333de9e12068`:
+[promotion direction](https://github.com/First-Principle-Lab/Mimir/actions/runs/45048285805/job/137287582891)
+and [lint, typecheck, tests and build](https://github.com/First-Principle-Lab/Mimir/actions/runs/45048285805/job/137287582881).
+There were no unresolved review threads or merge conflicts. Together with the
+resolved review findings and published 12/12 real-inference run, this satisfies
+the Phase 1 review and evaluation requirements. Subsequent documentation-only
+updates still require passing CI on the latest PR head before handback.
+PR #3 remains open for integration into `dev`; Phase 2 has not started.
