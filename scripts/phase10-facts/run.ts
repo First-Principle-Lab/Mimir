@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { loadEnv } from "../intent-iteration/_env.js";
+import { loadEnv } from "../_env.js";
 import { getPrismaClient, getLogger, callOpenRouter } from "@mimir/backend-core";
 
 // Fact layer live-LLM verification (not mocks). Drives the REAL extraction

@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadEnv } from "./intent-iteration/_env.js";
+import { loadEnv } from "./_env.js";
 
 // Minimal forward-only migration applier. Reads prisma/migrations/*/migration.sql
 // in lexical order, applies any not yet recorded in the _migrations table.

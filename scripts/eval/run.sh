@@ -3,7 +3,7 @@
 # The branch is the tested commit plus one commit adding evals/runs/<run-id>/.
 #
 # Usage: scripts/eval/run.sh <suite> "<topic>" [--push]
-#   suite: retrieval | query | locomo
+#   suite: retrieval | query | locomo | harness
 # Exit code: the suite's own exit code (0 pass, 1 fail, 2 not run), so CI can gate on it.
 set -euo pipefail
 
@@ -11,8 +11,8 @@ suite="${1:-}"
 topic="${2:-}"
 push="${3:-}"
 case "$suite" in
-  retrieval | query | locomo) ;;
-  *) echo "usage: scripts/eval/run.sh <retrieval|query|locomo> \"<topic>\" [--push]" >&2; exit 64 ;;
+  retrieval | query | locomo | harness) ;;
+  *) echo "usage: scripts/eval/run.sh <retrieval|query|locomo|harness> \"<topic>\" [--push]" >&2; exit 64 ;;
 esac
 [ -n "$topic" ] || { echo "a topic is required: say what this eval run is about" >&2; exit 64; }
 

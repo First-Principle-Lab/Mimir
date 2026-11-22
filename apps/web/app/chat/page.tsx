@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ComponentType, type SVGProps } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type SVGProps,
+} from "react";
 import { useRouter } from "next/navigation";
 import { Mic, ArrowUp, Plug } from "lucide-react";
 import { io } from "socket.io-client";
@@ -10,12 +17,20 @@ import { MovingBorderButton } from "@/components/chat/moving-border-button";
 import { Reveal, SignalDot } from "@/components/chat/motion";
 import { ThreadBubbles } from "@/components/chat/thread-bubbles";
 import { ConnectorsPanel } from "@/components/chat/connectors-panel";
-import { GitHubIcon, GmailIcon, GoogleCalendarIcon, LinearIcon, NotionIcon } from "@/components/landing/brand-icons";
+import {
+  GitHubIcon,
+  GmailIcon,
+  GoogleCalendarIcon,
+  LinearIcon,
+  NotionIcon,
+} from "@/components/landing/brand-icons";
 import type { ThreadMessage } from "@/lib/thread";
 import { cn } from "@/lib/utils";
 import { maybeNotifyDesktop } from "@/lib/push";
+import { findReply, preservePendingStreams } from "@/lib/pending-reply";
 
-const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api/v1";
+const API =
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api/v1";
 const WS_URL = API.replace(/^http/, "ws").replace(/\/api\/v1$/, "");
 
 // Roster icons for the connectors panel; unknown keys get a generic plug so the
@@ -50,6 +65,8 @@ interface ApiMessage {
   content: string;
   createdAt: string;
   toolCalls?: EmailToolCall | null;
+  clientMessageId?: string | null;
+  parentMessageId?: string | null;
 }
 
 interface Conversation {
@@ -69,9 +86,11 @@ function toThreadMessage(message: ApiMessage): ThreadMessage {
     text: message.content,
     at: message.createdAt ? formatAt(message.createdAt) : undefined,
     actionable:
-      message.toolCalls?.type === "gmail.send_email" && message.toolCalls.status === "pending",
+      message.toolCalls?.type === "gmail.send_email" &&
+      message.toolCalls.status === "pending",
     connectable:
-      (message.toolCalls?.type === "gmail.connect" || message.toolCalls?.type === "googlecalendar.connect") &&
+      (message.toolCalls?.type === "gmail.connect" ||
+        message.toolCalls?.type === "googlecalendar.connect") &&
       message.toolCalls.status === "pending",
   };
 }
@@ -97,17 +116,23 @@ export default function ChatPage() {
   // THIS session gets the reveal animation. On a fresh page load the thread is
   // already rendered — re-streaming the last message there is exactly the
   // bug where a reload plays the whole reply again.
-  const streamNextReplyRef = useRef(false);
+  const pendingReplyRef = useRef<string | null>(null);
+  const streamedInputsRef = useRef(new Set<string>());
+  const completedInputsRef = useRef(new Set<string>());
+  const refreshSequenceRef = useRef(0);
   const router = useRouter();
 
   const isEmpty = messages.length === 0;
 
   // The gmail connection drives the email-draft connectable bubble; derive it
   // from the roster fetch rather than owning a separate gmail-only status call.
-  const gmailConnected = roster.find((r) => r.key === "google-mail")?.connected ?? false;
+  const gmailConnected =
+    roster.find((r) => r.key === "google-mail")?.connected ?? false;
 
   const refreshConnectors = useCallback(async () => {
-    const res = await fetch(`${API}/integrations`, { credentials: "include" }).catch(() => null);
+    const res = await fetch(`${API}/integrations`, {
+      credentials: "include",
+    }).catch(() => null);
     if (res && res.ok) {
       const data = (await res.json()) as { integrations: RosterRow[] };
       setRoster(data.integrations);
@@ -115,6 +140,7 @@ export default function ChatPage() {
   }, []);
 
   const refreshThread = useCallback(async (): Promise<boolean> => {
+    const sequence = ++refreshSequenceRef.current;
     const res = await fetch(`${API}/conversation`, { credentials: "include" });
     if (res.status === 401) {
       router.replace("/login");
@@ -122,16 +148,39 @@ export default function ChatPage() {
     }
     if (!res.ok) return false;
     const data = (await res.json()) as Conversation;
+    if (sequence !== refreshSequenceRef.current) return true;
     setConversationId(data.conversation.id);
+    for (const message of data.conversation.messages) {
+      if (message.role === "assistant" && message.parentMessageId)
+        completedInputsRef.current.add(message.parentMessageId);
+    }
     const thread = data.conversation.messages.map(toThreadMessage);
-    setMessages(thread);
-    const last = thread[thread.length - 1];
+    setMessages((previous) =>
+      preservePendingStreams(thread, previous, completedInputsRef.current),
+    );
     // Only a reply that just arrived from this session's send gets the reveal
     // animation; a page reload shows the history as-is.
-    if (streamNextReplyRef.current && last?.speaker === "mimir" && last.id !== lastStreamedRef.current) {
-      setStreamingId(last.id);
+    if (pendingReplyRef.current) {
+      const reply = findReply(
+        data.conversation.messages,
+        pendingReplyRef.current,
+      );
+      if (reply) {
+        if (
+          reply.parentMessageId &&
+          streamedInputsRef.current.has(reply.parentMessageId)
+        ) {
+          lastStreamedRef.current = reply.id;
+        } else if (reply.id !== lastStreamedRef.current)
+          setStreamingId(reply.id);
+        pendingReplyRef.current = null;
+        setThinking(false);
+      }
+    } else {
+      // Reloading or reconnecting during a queued turn restores its loader.
+      const last = data.conversation.messages.at(-1);
+      setThinking(last?.role === "user");
     }
-    streamNextReplyRef.current = false;
     setView("chat");
     return true;
   }, [router]);
@@ -170,23 +219,45 @@ export default function ChatPage() {
     // httpOnly access_token cookie on the handshake.
     const socket = io(WS_URL, { withCredentials: true });
     let refreshing = false;
-    socket.on("connect", () => console.log("[socket] connected", socket.id));
+    socket.on("connect", () => {
+      void refreshThread().catch(() => {});
+    });
     socket.on("new_message", () => {
       void maybeNotifyDesktop("Mimir", "New activity in your thread");
-      fetch(`${API}/conversation`, { credentials: "include" })
-        .then((res) => (res.ok ? (res.json() as Promise<Conversation>) : null))
-        .then((data) => {
-          if (!data) return;
-          setConversationId(data.conversation.id);
-          setMessages(data.conversation.messages.map(toThreadMessage));
-        })
-        .catch((err) => console.error("[socket] conversation refetch failed", err));
+      refreshThread().catch((err) =>
+        console.error("[socket] conversation refetch failed", err),
+      );
+    });
+    socket.on(
+      "message_delta",
+      (event: {
+        conversationId: string;
+        inputMessageId: string;
+        text: string;
+      }) => {
+        if (
+          event.conversationId !== conversationId ||
+          completedInputsRef.current.has(event.inputMessageId)
+        )
+          return;
+        streamedInputsRef.current.add(event.inputMessageId);
+        const id = `stream-${event.inputMessageId}`;
+        setMessages((prev) => [
+          ...prev.filter((m) => m.id !== id),
+          { id, speaker: "mimir", text: event.text },
+        ]);
+      },
+    );
+    socket.on("turn_settled", () => {
+      void refreshThread().catch(() => {});
     });
     socket.on("connect_error", (err) => {
       // Only a rejected handshake means the access token is bad. Refresh at most one
       // at a time: /auth/refresh rotates the token, so concurrent refreshes from
       // multiple tabs sharing the cookie race.
-      const isAuthError = String(err?.message).toLowerCase().includes("unauthorized");
+      const isAuthError = String(err?.message)
+        .toLowerCase()
+        .includes("unauthorized");
       if (!isAuthError || refreshing) return;
       refreshing = true;
       fetch(`${API}/auth/refresh`, { method: "POST", credentials: "include" })
@@ -201,7 +272,16 @@ export default function ChatPage() {
     return () => {
       socket.disconnect();
     };
-  }, [view]);
+  }, [view, conversationId, refreshThread]);
+
+  useEffect(() => {
+    if (!thinking) return;
+    // Heal a lost pub/sub notification without requiring a page reload.
+    const timer = setInterval(() => {
+      void refreshThread().catch(() => {});
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [thinking, refreshThread]);
 
   const autosize = useCallback(() => {
     const node = textareaRef.current;
@@ -217,38 +297,44 @@ export default function ChatPage() {
       setThinking(true);
       setError(null);
       const clientMessageId = crypto.randomUUID();
+      pendingReplyRef.current = clientMessageId;
       setMessages((prev) => [
         ...prev,
         { id: clientMessageId, speaker: "you", text: content },
       ]);
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const res = await fetch(`${API}/message`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversationId, content, clientMessageId }),
-        });
-        if (res.status === 401) {
-          router.replace("/login");
+      try {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const res = await fetch(`${API}/message`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ conversationId, content, clientMessageId }),
+          });
+          if (res.status === 401) {
+            router.replace("/login");
+            setThinking(false);
+            pendingReplyRef.current = null;
+            return;
+          }
+          if (res.ok) {
+            await refreshThread().catch(() => {});
+            return;
+          }
+          const body = (await res.json().catch(() => null)) as {
+            error?: { message?: string };
+          } | null;
+          if (attempt === 0 && res.status >= 500) continue; // retry same idempotency key
+          setError(body?.error?.message ?? "Request failed");
           setThinking(false);
+          pendingReplyRef.current = null;
           return;
         }
-        if (res.ok) {
-          // This reply is the one we just asked for — let it reveal once.
-          streamNextReplyRef.current = true;
-          await refreshThread();
-          setThinking(false);
-          return;
-        }
-        const body = (await res.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        if (attempt === 0 && res.status >= 500) continue; // retry same idempotency key
-        setError(body?.error?.message ?? "Request failed");
         setThinking(false);
-        return;
+      } catch {
+        pendingReplyRef.current = null;
+        setThinking(false);
+        setError("Couldn't send your message. Please try again.");
       }
-      setThinking(false);
     },
     [thinking, conversationId, refreshThread, router],
   );
@@ -264,17 +350,25 @@ export default function ChatPage() {
     async (key: string) => {
       setError(null);
       const label = roster.find((r) => r.key === key)?.label ?? key;
-      const res = await fetch(`${API}/integrations/${key}/connect`, { method: "POST", credentials: "include" });
+      const res = await fetch(`${API}/integrations/${key}/connect`, {
+        method: "POST",
+        credentials: "include",
+      });
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-        setError(body?.error?.message ?? `Couldn't start ${label} connect — try again`);
+        const body = (await res.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        setError(
+          body?.error?.message ?? `Couldn't start ${label} connect — try again`,
+        );
         return;
       }
-      const { sessionToken, authorizationUrl, alreadyConnected } = (await res.json()) as {
-        sessionToken?: string;
-        authorizationUrl?: string;
-        alreadyConnected?: boolean;
-      };
+      const { sessionToken, authorizationUrl, alreadyConnected } =
+        (await res.json()) as {
+          sessionToken?: string;
+          authorizationUrl?: string;
+          alreadyConnected?: boolean;
+        };
       if (alreadyConnected) {
         void refreshConnectors();
         return;
@@ -302,7 +396,8 @@ export default function ChatPage() {
             const cancelled =
               event.payload.errorType === "window_closed" ||
               /access_denied/i.test(event.payload.errorMessage);
-            if (!cancelled) setError(`${label} connect didn't complete — try again`);
+            if (!cancelled)
+              setError(`${label} connect didn't complete — try again`);
           }
         },
       });
@@ -324,7 +419,10 @@ export default function ChatPage() {
     async (key: string) => {
       setError(null);
       const label = roster.find((r) => r.key === key)?.label ?? key;
-      const res = await fetch(`${API}/integrations/${key}/disconnect`, { method: "POST", credentials: "include" });
+      const res = await fetch(`${API}/integrations/${key}/disconnect`, {
+        method: "POST",
+        credentials: "include",
+      });
       if (!res.ok) {
         setError(`Couldn't disconnect ${label} — try again`);
         return;
@@ -343,7 +441,10 @@ export default function ChatPage() {
   );
 
   const logout = useCallback(async () => {
-    await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
+    await fetch(`${API}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
     setMessages([]);
     setConnectorsOpen(false);
     router.replace("/login");
@@ -365,7 +466,11 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
-      <SiteHeader watching={watching} onOpenConnectors={() => setConnectorsOpen(true)} onLogout={logout} />
+      <SiteHeader
+        watching={watching}
+        onOpenConnectors={() => setConnectorsOpen(true)}
+        onLogout={logout}
+      />
 
       <ConnectorsPanel
         open={connectorsOpen}
@@ -377,7 +482,10 @@ export default function ChatPage() {
       />
 
       <main className="relative flex-1 overflow-y-auto">
-        <div className="pointer-events-none absolute inset-0 grid-texture opacity-40" aria-hidden />
+        <div
+          className="pointer-events-none absolute inset-0 grid-texture opacity-40"
+          aria-hidden
+        />
 
         {isEmpty ? (
           <FirstVisit />
@@ -385,7 +493,13 @@ export default function ChatPage() {
           <div className="relative mx-auto w-full max-w-2xl px-5 pb-16 pt-14">
             <h1 className="sr-only">Your thread with Mimir</h1>
             <ThreadBubbles
-              messages={gmailConnected ? messages.map((m) => (m.connectable ? { ...m, connectable: false } : m)) : messages}
+              messages={
+                gmailConnected
+                  ? messages.map((m) =>
+                      m.connectable ? { ...m, connectable: false } : m,
+                    )
+                  : messages
+              }
               streamingId={streamingId}
               onStreamDone={() => {
                 if (streamingId) lastStreamedRef.current = streamingId;
@@ -405,7 +519,9 @@ export default function ChatPage() {
                     : "Still watching — nothing else worth telling you yet."}
               </span>
             </div>
-            {error ? <p className="pt-2 text-xs text-destructive">{error}</p> : null}
+            {error ? (
+              <p className="pt-2 text-xs text-destructive">{error}</p>
+            ) : null}
             <div ref={bottomRef} />
           </div>
         )}

@@ -19,7 +19,9 @@ const JWT_SECRET = getConfig().JWT_SECRET;
 
 const server = createServer();
 initSocket(server);
-const subscriber = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: 1 });
+const subscriber = new Redis(process.env.REDIS_URL, {
+  maxRetriesPerRequest: 1,
+});
 initPubSub(subscriber);
 const port = await new Promise<number>((resolve) => {
   server.listen(0, () => resolve((server.address() as { port: number }).port));
@@ -47,13 +49,47 @@ function connect(token: string): Promise<Socket> {
 }
 
 describe("pub/sub -> socket", () => {
+  test("provisional text and settlement reach only the user's live socket", async () => {
+    const socket = await connect(
+      await signAccessToken("stream-user", JWT_SECRET),
+    );
+    const event = new Promise<unknown>((resolve) =>
+      socket.once("message_delta", resolve),
+    );
+    const settled = new Promise<unknown>((resolve) =>
+      socket.once("turn_settled", resolve),
+    );
+    await pub.publish(
+      "user-events:stream-user",
+      JSON.stringify({
+        event: "message_delta",
+        payload: { text: "Hello", inputMessageId: "input" },
+      }),
+    );
+    await pub.publish(
+      "user-events:stream-user",
+      JSON.stringify({
+        event: "turn_settled",
+        payload: { inputMessageId: "input" },
+      }),
+    );
+    expect(await event).toEqual({ text: "Hello", inputMessageId: "input" });
+    expect(await settled).toEqual({ inputMessageId: "input" });
+    socket.disconnect();
+  });
   test("worker publish on user-events:{userId} reaches that user's socket on the payload's event name", async () => {
     const token = await signAccessToken("user-1", JWT_SECRET);
     const socket = await connect(token);
     const received: unknown[] = [];
     socket.on("new_message", (p) => received.push(p));
 
-    await pub.publish("user-events:user-1", JSON.stringify({ event: "new_message", payload: { conversationId: "c-1" } }));
+    await pub.publish(
+      "user-events:user-1",
+      JSON.stringify({
+        event: "new_message",
+        payload: { conversationId: "c-1" },
+      }),
+    );
     await Bun.sleep(100);
 
     expect(received).toEqual([{ conversationId: "c-1" }]);
@@ -66,7 +102,10 @@ describe("pub/sub -> socket", () => {
     let got = 0;
     socket.on("new_message", () => got++);
 
-    await pub.publish("user-events:user-2", JSON.stringify({ event: "new_message", payload: { hi: true } }));
+    await pub.publish(
+      "user-events:user-2",
+      JSON.stringify({ event: "new_message", payload: { hi: true } }),
+    );
     await Bun.sleep(100);
 
     expect(got).toBe(0);

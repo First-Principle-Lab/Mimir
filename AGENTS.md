@@ -47,6 +47,24 @@ changing agent code.**
 - Every PR adds or updates tests for the code it changes. A PR that only deletes code must keep
   the remaining tests green.
 
+## Phase completion gate
+
+Every phase ends with a dedicated review and evaluation before the next phase begins.
+Before marking a phase complete or starting work on the next phase:
+
+1. Review the entire phase against **every planned requirement and exit criterion** in [plan.md](plan.md),
+   including changes spread across multiple PRs. Check the implementation, integrations, migrations,
+   tests and end-to-end behavior; identify omissions, regressions and unfinished work.
+2. Run the relevant evaluations with **actual model inference** through the implemented agent path.
+   Mocked or faux-model tests supplement this evaluation but cannot replace it. A missing API key,
+   skipped evaluation or run marked "not run" leaves the gate incomplete.
+3. Fix the review findings and evaluation failures, then repeat the affected checks and real-inference
+   evaluations. Record the review findings, resolutions, test results, tested commit and passing
+   `eval/...` branch in the phase's PR or completion report.
+4. Proceed only when every requirement and exit criterion is satisfied, the review findings are
+   resolved, required CI checks pass and the real-inference evaluations pass. Green CI alone does
+   not establish phase completion. If anything remains, finish the current phase before moving on.
+
 ## Before you open a PR
 
 ```sh

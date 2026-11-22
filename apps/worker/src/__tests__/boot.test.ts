@@ -10,22 +10,23 @@ process.env.JWT_SECRET = "boot-test-secret";
 
 const workerDir = path.resolve(import.meta.dir, "../..");
 
-// The five repeatable schedulers index.ts registers on the shared
-// agent-triggers queue. A subsequent suite run's agent-triggers worker could
-// otherwise pick them up at a cron boundary and run real sweeps mid-test, so the
-// boot test removes what it registers — leaving the registry as it found it.
-const BOOT_SCHEDULERS = ["dormancy-sweep", "mail-poll-sweep", "trigger-tick", "watch-renewal", "connection-canary"];
+// The repeatable schedulers index.ts registers on the shared agent-triggers
+// (maintenance) queue. A later suite's worker could pick them up at a cron
+// boundary and run real sweeps mid-test, so the boot test removes what it
+// registers — leaving the registry as it found it.
+const BOOT_SCHEDULERS = ["github-hook-sweep", "watch-renewal", "connection-canary", "fact-extraction-sweep"];
+
+// Modules of the deleted classifier-first agent pipeline (Phase 1 of plan.md).
+const DELETED_MODULES = ["agent-execution", "planner", "reflector", "tasks-registry", "triggers", "dormancy", "mail-poll", "webhook-relay", "email-send-job"];
 
 describe("apps/worker full boot (entrypoint)", () => {
-  test("index.ts boots cleanly with zero references to scheduleAdaptivePolling / scheduleReconciliation", async () => {
+  test("index.ts boots cleanly and the old agent pipeline is gone", async () => {
     // Source-level, deterministic check first: the boot module graph must not
-    // mention the deleted scheduler functions or the deleted module at all.
+    // import any module of the deleted pipeline.
     const queuesSrc = await Bun.file(path.join(workerDir, "src/infra/queues.ts")).text();
     const indexSrc = await Bun.file(path.join(workerDir, "src/index.ts")).text();
     for (const src of [queuesSrc, indexSrc]) {
-      expect(src).not.toContain("scheduleAdaptivePolling");
-      expect(src).not.toContain("scheduleReconciliation");
-      expect(src).not.toContain("event-polling");
+      for (const mod of DELETED_MODULES) expect(src).not.toContain(`/${mod}.js`);
     }
 
     // Real boot: run the actual entrypoint as a subprocess. "mimir/worker ready"
@@ -74,9 +75,6 @@ describe("apps/worker full boot (entrypoint)", () => {
         await Bun.sleep(100);
       }
       expect(stdout, `boot failed; stderr=${stderr.trim()}`).toContain("mimir/worker ready");
-      const combined = stdout + stderr;
-      expect(combined).not.toContain("scheduleAdaptivePolling");
-      expect(combined).not.toContain("scheduleReconciliation");
     } finally {
       proc.kill();
       await Promise.all([outRead, errRead, proc.exited]);

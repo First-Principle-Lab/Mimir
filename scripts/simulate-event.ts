@@ -1,4 +1,4 @@
-import { loadEnv } from "./intent-iteration/_env.js";
+import { loadEnv } from "./_env.js";
 import { Redis } from "ioredis";
 
 // Publish a fake `user-events:{userId}` message so the api's delivery fallback

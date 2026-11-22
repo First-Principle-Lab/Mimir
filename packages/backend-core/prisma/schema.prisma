@@ -21,17 +21,6 @@ enum MessageStatus {
   failed
 }
 
-enum AgentStatus {
-  active
-  dormant
-  archived
-}
-
-enum AgentComplexity {
-  simple
-  complex
-}
-
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -41,7 +30,6 @@ model User {
   createdAt    DateTime @default(now())
 
   conversations     Conversation[]
-  agents            Agent[]
   connections       IntegrationConnection[]
   mcpServers        McpServer[]
   refreshTokens     RefreshToken[]
@@ -49,7 +37,7 @@ model User {
   pushSubscriptions PushSubscription[]
   analyticsEvents   AnalyticsEvent[]
   modelCallLogs     ModelCallLog[]
-  surfacedMails     SurfacedMail[]
+  agentRuns         AgentRun[]
 }
 
 model Conversation {
@@ -64,9 +52,10 @@ model Conversation {
   // column have NULL here, so the FIRST run on them backfills the whole thread —
   // see the Task 13.7 design note on the one-time backlog burst.
   lastExtractedAt DateTime?
-  messages  Message[]
-  summaries ConversationSummary[]
-  facts     ExtractedFact[]
+  messages       Message[]
+  facts          ExtractedFact[]
+  sessionEntries SessionEntry[]
+  agentRuns      AgentRun[]
 
   @@index([userId])
 }
@@ -94,19 +83,8 @@ model Message {
   @@unique([conversationId, clientMessageId])
   @@index([conversationId, createdAt])
 }
-model ConversationSummary {
-  id                 String       @id @default(uuid())
-  conversationId     String
-  conversation       Conversation @relation(fields: [conversationId], references: [id])
-  summaryText        String       @db.Text
-  coversMessagesUpTo DateTime
-  createdAt          DateTime     @default(now())
-
-  @@index([conversationId])
-}
-
 // Flat, atomically-retrievable durable facts extracted from
-// the thread, alongside the narrative ConversationSummary (see fact-extraction.ts).
+// the thread (see fact-extraction.ts).
 // `status` is a plain string (not a PG enum) because it keeps gaining states —
 // active | superseded | deleted — and each addition would otherwise require an
 // ALTER TYPE migration. Enforce the allowed set with a TS union at call sites.
@@ -194,90 +172,64 @@ model RefreshToken {
   @@index([userId])
 }
 
-model Agent {
-  id                  String      @id @default(uuid())
-  userId              String
-  user                User        @relation(fields: [userId], references: [id])
-  ownerConversationId String
-  taskDescription     String      @db.Text
-  entity              String?
-  status              AgentStatus @default(active)
-  // Complexity gate: decided once at spawn by the classification call. Only
-  // `complex` agents route through the reflector.
-  complexity          AgentComplexity @default(simple)
-  embedding           Unsupported("vector(1536)")? // needs CREATE EXTENSION vector (hand-added to init migration); client access via $queryRaw only
-  contextSummary      String?     @db.Text // folded-in summary of older AgentEvents once the per-agent context budget (40 events / 8k tokens) is exceeded
-  lastActiveAt        DateTime    @default(now())
-  createdAt           DateTime    @default(now())
-  events              AgentEvent[]
-  reflectionEvents    ReflectionEvent[]
-  plans               Plan[]
-  triggers            Trigger[]
+// Harness (pi) session journal: one row per pi SessionEntry, in append order.
+// The worker rebuilds an AgentSession from these rows (SessionManager.inMemory)
+// and appends new entries as the run produces them, so a restarted worker
+// resumes the conversation's model context. `data` is the full entry JSON.
+model SessionEntry {
+  seq            BigInt       @id @default(autoincrement())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  entryId        String
+  parentEntryId  String?
+  type           String
+  data           Json
+  createdAt      DateTime     @default(now())
 
-  @@index([userId, status])
+  @@unique([conversationId, entryId])
+  @@index([conversationId, seq])
 }
 
-// Planning: one row per planned complex run. `steps` is the planner's ordered,
-// dependency-resolved JSON. status tracks the run so a replan can mark the
-// failed plan before retrying. agentId stays required — one-shot runs skip
-// planning entirely (they have no Agent to own the plan).
-model Plan {
-  id        String   @id @default(uuid())
-  agentId   String
-  agent     Agent    @relation(fields: [agentId], references: [id])
-  steps     Json
-  status    String   @default("planned") // planned | running | completed | failed
+// One row per harness run (a user turn today; events and routines later).
+// status: running | succeeded | failed | interrupted. Plain string, like
+// ExtractedFact.status, because it will keep gaining states.
+model AgentRun {
+  id               String       @id @default(uuid())
+  conversationId   String
+  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trigger          String
+  inputMessageId   String?
+  replyMessageId   String?
+  status           String       @default("running")
+  model            String?
+  steps            Int          @default(0)
+  toolCalls        Int          @default(0)
+  promptTokens     Int          @default(0)
+  completionTokens Int          @default(0)
+  costUsd          Float        @default(0)
+  error            Json?
+  startedAt        DateTime     @default(now())
+  finishedAt       DateTime?
+  journal          AgentStep[]
+
+  @@unique([inputMessageId])
+  @@index([conversationId, startedAt])
+  @@index([status])
+}
+
+model AgentStep {
+  seq       BigInt   @id @default(autoincrement())
+  runId     String
+  run       AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  kind      String
+  data      Json
   createdAt DateTime @default(now())
 
-  @@index([agentId])
+  @@index([runId, seq])
 }
 
-model AgentEvent {
-  id        String   @id @default(uuid())
-  agentId   String
-  agent     Agent    @relation(fields: [agentId], references: [id])
-  eventType String
-  payload   Json
-  createdAt DateTime @default(now())
-
-  @@index([agentId, createdAt])
-}
-
-// Reflector: one row per failed evaluation on a complex run.
-// Kept separate from AgentEvent so reflection noise doesn't pollute the agent's
-// working context once a final answer is reached. `agentId` stays required —
-// one-shot runs (no Agent) skip the DB write, not the column.
-model ReflectionEvent {
-  id            String   @id @default(uuid())
-  agentId       String
-  agent         Agent    @relation(fields: [agentId], references: [id])
-  attemptNumber Int
-  score         Float
-  feedback      String   @db.Text
-  createdAt     DateTime @default(now())
-
-  @@index([agentId, createdAt])
-}
-
-// First-class triggers: a natural-language condition scoped to its owning
-// agent, evaluated by the 1-min scheduler tick. Created via cheap-model
-// classification; re-checked at fire time by the owning agent before it
-// acts. `criteria` is the natural-language condition, not a cron expression —
-// `schedule` is reserved for future user-supplied cadences.
-model Trigger {
-  id          String    @id @default(uuid())
-  agentId     String
-  agent       Agent     @relation(fields: [agentId], references: [id])
-  name        String
-  criteria    String    @db.Text
-  schedule    String?
-  enabled     Boolean   @default(true)
-  lastFiredAt DateTime?
-  createdAt   DateTime  @default(now())
-
-  @@index([agentId, enabled])
-  @@index([enabled])
-}
 model OutboxEvent {
   id          String    @id @default(uuid())
   eventType   String
@@ -286,20 +238,6 @@ model OutboxEvent {
   createdAt   DateTime  @default(now())
 
   @@index([processedAt])
-}
-
-// Durable, Postgres-claimed dedup for surfaced mail (the source of truth in
-// addition to the Redis set). A unique primary key on messageId means a re-poll
-// can NEVER re-surface the same email, even if Redis was flushed or a scale-out
-// worker re-ran the sweep. The crew's in-flight atomic claim is still the Redis
-// set; this row records the durable claim once surfaced.
-model SurfacedMail {
-  messageId String   @id
-  userId    String
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
 }
 
 // User-supplied MCP servers: separate settings section, streamable-HTTP
