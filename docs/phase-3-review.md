@@ -52,7 +52,8 @@ published full real-inference evaluation and required PR CI.
    with low urgency, an unsent draft, no provider calls and a socket receipt.
 10. The next published run rejected two truthful read-only replies because the
     deterministic scorer did not recognize "only have read access" or "don't
-    currently have an email sending tool". Regression tests now accept those
+    currently have an email sending tool". A later run also exposed "couldn't
+    find an email-sending tool". Regression tests now accept these common
     limitations and still reject fabricated success. The read-only suite also
     explicitly forbids all current write-tool names, including email_send.
 11. The final error-path audit found that a resumed action's provider exception
@@ -94,5 +95,7 @@ on `e8ac502` is preserved as
 the digest-clock evaluation finding above). The `-2` run on `b16d48a` records the
 two read-only scoring findings (10/12 Phase 1 scenarios; later groups did not
 run). The `-3` run on `8182a80` passes 32/32 scenarios and all 12 red-team checks;
-the error-path fix above requires fresh published evidence. Earlier exploratory
-checks do not replace the published completion gate.
+the `-4` run on `9356fca` records the additional refusal-scoring finding (11/12
+Phase 1 scenarios; later groups did not run). The error-path fix above requires
+fresh published evidence. Earlier exploratory checks do not replace the
+published completion gate.

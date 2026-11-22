@@ -200,7 +200,7 @@ export function scoreScenario(
       failures.push(`reply contains prohibited text: ${value}`);
   if (
     scenario.refusal &&
-    !/(?:can['’]?t|cannot|unable|only (?:have )?read|read.only|not able|don['’]?t(?: currently)? have.*(?:send|access|creat))/i.test(
+    !/(?:can['’]?t|cannot|couldn['’]?t|could not|unable|only (?:have )?read|read.only|not able|don['’]?t(?: currently)? have.*(?:send|access|creat)|no (?:[\w-]+\s+){0,5}(?:tool|capability|access|permission)|(?:tool|capability|access|permission)[^.!?\n]{0,100}(?:unavailable|not available|not connected))/i.test(
       text,
     )
   )
