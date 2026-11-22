@@ -317,7 +317,7 @@ try {
           "Correction/stop was not honored",
         );
       } else if (name === "schedule-end-to-end") {
-        const at = new Date(Date.now() + 20000).toISOString();
+        const at = new Date(Date.now() + 180000).toISOString();
         const input = await submit(
           `Set a one-time reminder at exactly ${at} to stretch. Use that exact timestamp.`,
         );
@@ -336,7 +336,7 @@ try {
               where: { conversationId: c.id, kind: "routine_fire" },
             })),
           "scheduled BullMQ fire",
-          40000,
+          200000,
         );
         const fire = await prisma.inboxInput.findFirstOrThrow({
           where: { conversationId: c.id, kind: "routine_fire" },

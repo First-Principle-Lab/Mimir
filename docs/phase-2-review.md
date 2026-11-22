@@ -42,6 +42,11 @@ commit and required PR CI; evidence is recorded below.
    untrusted worker text. It now includes the actual prior user request as native
    history; a worker's claim is never promoted into a trusted instruction.
 
+9. The first published gate hit provider latency beyond the scheduling fixture's
+   20-second deadline. The scheduler correctly rejected the past instant. The
+   fixture now schedules beyond the whole-turn timeout and waits for the actual
+   delayed BullMQ fire; no production clock or scheduling policy is bypassed.
+
 ## Validation and limits
 
 - Workspace lint, typecheck, **227 tests** across six workspaces, duplication
