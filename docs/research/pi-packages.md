@@ -1,0 +1,91 @@
+# pi package survey for Mimir
+
+Surveyed **2026-11-22** against the npm registry (`keywords:pi-package`, the same index the
+[pi package gallery](https://pi.dev/packages) uses) and the pi source at `earendil-works/pi`
+(v1.6.0, MIT). Download counts are npm monthly downloads on the survey date.
+
+## Ecosystem facts that shape every decision
+
+- **14,161** packages carry the `pi-package` keyword. 46 topic searches returned **882** distinct
+  packages relevant to a personal assistant. Most of them are **coding-agent and single-user CLI**
+  tools: they assume a local terminal user, read config from `~/.pi/agent/...`, and use the TUI.
+- **There are two pi extension systems, and they are not compatible:**
+  - `@earendil-works/pi-coding-agent` extensions (`pi.registerTool`, `pi.on("tool_call")`, …).
+    Every gallery package targets this API. It is built on `pi-agent-core` and is the **stable** surface.
+  - `@earendil-works/pi-durable` extensions (`defineExtension({ tools, sections, hooks, tasks })`).
+    Durable inbox, child tasks, sleep/wake, idempotent submissions — but **experimental** ("API changes
+    without notice"), storage is SQLite/JSONL/memory/Cloudflare only (**no Postgres**), and gallery
+    packages cannot load into it.
+- The coding-agent **SDK works headless inside a server**:
+  - `createAgentSession({ sessionManager: SessionManager.inMemory(), resourceLoader, noTools, … })`.
+  - Extensions load through `DefaultResourceLoader({ extensionFactories })` or a custom `ResourceLoader`.
+  - `session.bindExtensions({ uiContext })` lets the host implement `ctx.ui.confirm/select/input`,
+    so an extension's "ask the user" dialog can become a Mimir approval card or choice card.
+  - `session.steer()` / `session.followUp()` / `session.abort()` cover mid-task messages.
+  - Events (`message_update`, `message_end`, `tool_execution_*`, `agent_end`, `agent_settled`) stream
+    to the host.
+  - Extension `tool_call` handlers **can block** a call (`{ block: true, reason }`) — this is where
+    Mimir's policy gate lives.
+  - The CLI's built-in **MCP**, **tool_search** and **codemode** extensions are available to SDK
+    sessions via `createMcpExtension()`, `createToolSearchExtension()`, `createCodemodeExtension()`.
+
+**Decision:** build on the `pi-coding-agent` SDK (stable, ecosystem-compatible). Mimir owns
+durability (Postgres session entries + BullMQ), multi-tenancy, and the policy gate. Watch
+`pi-durable`; revisit when it is stable and has a Postgres storage adapter.
+
+## Adopt (use as a pinned dependency, after the Phase 1 spike confirms headless + multi-tenant use)
+
+| Package | License | dl/mo | What Mimir uses it for | Caveat to verify in the spike |
+|---|---|---|---|---|
+| pi built-in `createMcpExtension()` | MIT (pi) | — | Composio hosted MCP servers and user-added custom MCP servers | Per-user server config injected by Mimir, not read from files |
+| pi built-in `createToolSearchExtension()` | MIT (pi) | — | Deferred tools: keep ~10–15 tools loaded, search the rest | — |
+| pi built-in `createCodemodeExtension()` | MIT (pi) | — | Later: code mode over many integration tools | Needs a real sandbox; not before Phase 5 |
+| `@tintinweb/pi-subagents` 0.26.2 | MIT | 86.6k | Claude Code-style `Agent` / `get_subagent_result` / `steer_subagent`; background by default; completion delivered at the parent's next boundary; concurrency cap (default 10) | Whether children run in-process via SDK sessions; depth limit; tool restriction per child |
+| `pi-subagents` 0.89.2 (nicobailon) | MIT | 1.06M | Alternative to the above: delegation, parallel runs, saved workflows, background jobs | Background children use a **detached Node runner** (extra processes per child) — likely wrong for a server |
+| `pi-web-access` 0.48.0 | MIT | 1.37M | Web search, URL fetch, PDF extraction for research tasks | Output is untrusted → must be tagged for the taint gate |
+| `@capdiem/pi-todo` 0.3.2 | MIT | — | `update_plan`-style todo tool (snapshot plans, three states, stale-write guard) | That state is stored in session entries, not files |
+| `@amaster.ai/pi-telemetry` 0.1.40 | Apache-2.0 | 5.4k | Langfuse / OpenTelemetry traces, time-to-first-token, token and cost accounting | Reads config from `~/.pi/agent/settings.json`; may need to fork the config loader |
+
+Pick **one** subagent package in the spike. Mimir's own long-lived background agents (watchers,
+routines) stay on BullMQ either way, because in-process children die with the process.
+
+## Port (read the source, re-implement the idea inside Mimir)
+
+| Package | License | What to take | Where it lands |
+|---|---|---|---|
+| `pi-durable-bot` ("Pots") 0.8.8 | MIT | The closest product to Mimir: an open-source Grok Bot alternative on pi-durable. Decision flow: a DM wakes the agent at once; other events are grouped (3 s after the last one, 20 s max) and go through a judge; busy agent gets new messages steered in; the agent can end with "do nothing". | Phase 2 inbox and response contracts |
+| `@ai-outfitter/channels` 1.13.1 (alpha) | MIT | Watchers that wake one session per task **only when a source detects matching work**; the wake is a body-free reference and content is fetched with `channel_read` inside explicit untrusted-content markers. | Phase 2 watchers, Phase 3 injection safety |
+| `@alphacoder-v0/pi-loops` 0.24.2 | MIT | Loops that wake with their previous notes, run in a clean-context subagent, file findings to an inbox, and optionally pass a second adversarial "verify" subagent before reaching the user. | Post-harness routines (§5); "nothing to report" handling |
+| `pi-schedule-prompt` 0.5.1 | MIT | The `schedule_prompt` tool contract: recurring (cron/interval), one-shot, idle jobs; optional per-job model in a separate session. Its timers are in-process, so re-implement on BullMQ. | Phase 2 `schedule` tool |
+| `@gotgenes/pi-permission-system` 42.2.0 | MIT | Allow / ask / deny gates over tools, MCP servers and skills; hides disallowed tools before the run. Config is a single file and the package has 267 releases (heavy churn), so port the model instead of depending on it. | Phase 3 policy gate |
+| `pi-hermes-memory` 0.11.0 | MIT | Secret scanning before a memory write; search over past sessions; background learning every N turns; procedural "how I solved it" notes. | Phase 5 memory |
+| `pi-observational-memory` 3.1.4 | MIT | Cache-friendly tiered compaction with observations and reflections. Compare against pi's built-in compaction first. | Phase 5 compaction |
+| `@trevonistrevon/pi-loop` 0.8.2 | MIT | Loop/monitor/workflow vocabulary. Its own docs say wakes are memory-only and it runs only while pi is active — not durable, so reference only. | Phase 4 |
+| `@onkernel/browser-loop` 0.12.1 | MIT | Framework-neutral browser tool catalog with a `pi-agent-core` binding, running on Kernel browsers. Option to replace Browserbase, or port the catalog onto Browserbase. | Phase 3 browser tool |
+| `betterwright` 2.9.1 | MIT | Policy-guarded browser with trusted credential filling. Electron peer dependency, so not for the server. | Post-harness Vault (§2) |
+| `@alexeiled/pi-model-router` 0.25.0 | MIT | Classifier-based model routing with soft budgets. Note: switching models mid-conversation breaks the prompt cache. | Phase 5 model tiering |
+
+## Skip
+
+| Package(s) | Why |
+|---|---|
+| `agents-cron` | AGPL-3.0 — copyleft over the network; incompatible unless Mimir is AGPL |
+| `personal-bot`, `@nothumanwork/pi-memory` | No license — cannot legally reuse |
+| `@agimon-ai/po-*` | BUSL-1.1 and alpha builds |
+| `billion-context` (~4M dl/mo) | 10,328 published versions since Aug 2026 (automated publishing); try pi's built-in compaction first |
+| `pi-mcp-adapter`, `pi-mcp-extension` | pi now ships a built-in MCP extension |
+| Gmail / Google / Calendar / Outlook packages (`@nexionsoftware/pi-gmail`, `pi-google-services`, `pi-codex-outlook`, …) | Single-user local OAuth; Mimir uses Composio multi-tenant connections |
+| Telegram / WeChat / Slack bridges (`@llblab/pi-telegram`, `pi-wechat-assistant`, …) | Chat channels are out of scope until after the harness; Mimir has its own web/desktop UI |
+| Desktop / terminal notification packages | Mimir already has Web Push and Tauri notifications |
+
+## Rules for third-party pi packages
+
+1. **Pin exact versions** in `package.json` (no `^`/`~`). Upgrades go through a PR that links the
+   upstream diff.
+2. **Read the source before adding or upgrading.** pi's own docs warn that packages execute code and
+   can ship skills that tell the model to run programs; OpenClaw's skill marketplace had hundreds of
+   malicious skills in 2026.
+3. **Load only from an explicit list** in Mimir's `ResourceLoader`. Never discover extensions, skills or
+   settings from `~/.pi` or project directories in the server.
+4. **Anything that touches credentials, approvals or memory writes is ported, not depended on.**
+5. **Record each decision** (adopt / port / skip, with the reason) in this file.

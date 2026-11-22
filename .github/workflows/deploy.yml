@@ -1,0 +1,67 @@
+name: deploy
+
+on:
+  push:
+    branches: [staging, main] # main is production
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  deploy:
+    name: deploy ${{ github.ref_name }}
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # GitHub Environments hold the deploy hooks; require a reviewer on "production" in repo settings.
+    environment: ${{ github.ref_name == 'main' && 'production' || 'staging' }}
+    steps:
+      - name: Trigger Render deploy hooks
+        id: hooks
+        env:
+          HOOK_API: ${{ secrets.RENDER_DEPLOY_HOOK_API }}
+          HOOK_WORKER: ${{ secrets.RENDER_DEPLOY_HOOK_WORKER }}
+          HOOK_WEB: ${{ secrets.RENDER_DEPLOY_HOOK_WEB }}
+        run: |
+          deployed=0
+          for svc in API WORKER WEB; do
+            var="HOOK_$svc"
+            url="${!var}"
+            if [ -z "$url" ]; then
+              echo "::notice::RENDER_DEPLOY_HOOK_$svc is not set for this environment; $svc deploy skipped."
+              continue
+            fi
+            curl -fsS -X POST "$url" > /dev/null
+            echo "triggered $svc"
+            deployed=$((deployed + 1))
+          done
+          echo "deployed=$deployed" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the new API version to be healthy
+        if: steps.hooks.outputs.deployed != '0' && vars.HEALTHCHECK_URL != ''
+        env:
+          URL: ${{ vars.HEALTHCHECK_URL }}
+          WANT: ${{ github.sha }}
+        run: |
+          # /health reports the deployed commit (RENDER_GIT_COMMIT). Wait up to 20 minutes for ours.
+          for _ in $(seq 1 120); do
+            body="$(curl -fsS --max-time 10 "$URL" || true)"
+            commit="$(printf '%s' "$body" | sed -nE 's/.*"commit":"?([0-9a-f]*|null)"?.*/\1/p')"
+            status="$(printf '%s' "$body" | sed -nE 's/.*"status":"([a-z]+)".*/\1/p')"
+            if [ "$status" = "ok" ] && { [ "$commit" = "$WANT" ] || [ "$commit" = "null" ]; }; then
+              [ "$commit" = "null" ] && echo "::warning::/health does not report a commit; checked health only."
+              echo "healthy at ${commit}"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::$URL did not report status ok at commit $WANT within 20 minutes (last: $body)"
+          exit 1

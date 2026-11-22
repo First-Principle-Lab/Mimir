@@ -8,9 +8,10 @@ import { Redis } from "ioredis";
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
 process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "e2e-phase4-secret";
-if (!process.env.OPENROUTER_API_KEY) {
-  throw new Error("OPENROUTER_API_KEY required for the real-LLM E2E test");
-}
+// Real-LLM test: skipped without the key (same as e2e-ack), instead of throwing
+// at import and failing every sibling test in the same process.
+const hasLLMKey = Boolean(process.env.OPENROUTER_API_KEY);
+const e2eDescribe = hasLLMKey ? describe : describe.skip;
 
 const { getPrismaClient } = await import("@mimir/backend-core");
 const { authRouter } = await import("../auth/auth.js");
@@ -31,7 +32,7 @@ async function poll<T>(fn: () => Promise<T>, ok: (t: T) => boolean, timeoutMs = 
   }
 }
 
-describe("agent end-to-end (real LLM, mocked integration)", () => {
+e2eDescribe("agent end-to-end (real LLM, mocked integration)", () => {
   // HTTP only — no initSocket/initPubSub. bun runs every test file in ONE process,
   // so those module-level singletons are owned by socket.test.ts / pubsub.test.ts.
   const app = express();
