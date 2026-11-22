@@ -13,6 +13,7 @@ export function responseTools(opts: {
   ambient: boolean;
   response: { sent: boolean; interrupted: boolean };
   assertOwned: () => Promise<void>;
+  sanitize?: (text: string) => string;
 }): ToolSpec[] {
   const notification = z.object({
     text: z.string().trim().min(1).max(8000),
@@ -76,7 +77,7 @@ export function responseTools(opts: {
                     id,
                     conversationId: opts.conversationId,
                     role: "assistant",
-                    content: value.text,
+                    content: opts.sanitize?.(value.text) ?? value.text,
                   },
                   update: {},
                 });
@@ -100,6 +101,10 @@ export function responseTools(opts: {
                 });
                 await tx.agentRun.update({
                   where: { id: opts.runId },
+                  data: { replyMessageId: message.id },
+                });
+                await tx.inboxInput.updateMany({
+                  where: { id: { in: opts.inputs.map((input) => input.id) } },
                   data: { replyMessageId: message.id },
                 });
               });

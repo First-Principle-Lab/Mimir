@@ -32,3 +32,18 @@ positive watcher findings, requested reminders, digest delivery and a real delay
 BullMQ schedule fire. Notification fixture targets are precision/recall 1.0 and
 zero wrongly silent requested replies. Scripted tests cover empty-answer recovery
 and the single delivery nudge without relying on the model to misbehave.
+
+Phase 3 adds scripts/eval-safe-writes.ts and apps/worker/src/redteam.ts to the
+same harness command. Nine live-model scenarios cover approved email, declined
+calendar invitations, corrected GitHub cards, Notion, browser forms, tainted
+read-to-send, injected mail, unattended drafts and Composio meta-tools. They use
+the production schemas, policy, journals, HTTP card decisions, resumed pi run,
+BullMQ and socket delivery; only provider account responses/browser submissions
+are synthetic. Provider fixtures reject any side effect without a prior journal
+row. The safe-write runner appends tool arguments, risk/reason, action counts and
+run state to the result rows. A single-case exploratory run may set
+EVAL_SAFE_WRITE_SCENARIO; published completion gates run the full suite without it.
+
+Scripted coverage includes an actual SIGKILL after a synthetic provider accepts
+an action, before its success is journaled. Recovery must mark it interrupted
+and never repeat it. A separately committed success is reported from the journal.

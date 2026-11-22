@@ -43,6 +43,13 @@ export interface ToolRunContext {
   runId?: string;
   toolCallId?: string;
   signal?: AbortSignal;
+  assertOwned?: () => Promise<void>;
+  safety?: {
+    ambient: boolean;
+    tainted: boolean;
+    pendingApproval: boolean;
+    allowedDomains: Set<string>;
+  };
 }
 
 export interface ToolSpec {
@@ -59,6 +66,9 @@ export interface ToolSpec {
   resultTrust: "trusted" | "untrusted";
   outputMaxChars: number;
   deferred?: boolean;
+  prepare?(args: unknown, ctx: ToolRunContext): Promise<unknown> | unknown;
+  effectiveRisk?(args: unknown): ToolRisk;
+  idempotencyKey?(args: unknown, ctx: ToolRunContext): string;
   execute(args: unknown, ctx: ToolRunContext): Promise<unknown>;
 }
 

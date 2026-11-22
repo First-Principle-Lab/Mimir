@@ -194,3 +194,50 @@ test("a crashed sender is recovered only after its lease expires", async () => {
     ).status,
   ).toBe("delivered");
 });
+
+test("a late notification receipt survives a later approval reply on the same run", async () => {
+  const row = await delivery("normal", true);
+  const routine = await prisma.routine.create({
+    data: {
+      userId,
+      conversationId,
+      instruction: "Watch this",
+      source: "schedule",
+      query: {},
+      timing: { type: "interval", everyMs: 60000 },
+    },
+  });
+  await prisma.routineScratch.create({ data: { routineId: routine.id } });
+  const run = await prisma.agentRun.create({
+    data: {
+      userId,
+      conversationId,
+      trigger: "routine_fire",
+      replyMessageId: "later-approval-reply",
+    },
+  });
+  await prisma.inboxInput.create({
+    data: {
+      conversationId,
+      runId: run.id,
+      kind: "routine_fire",
+      source: "routine:schedule",
+      dedupeKey: randomUUID(),
+      replyMessageId: row.messageId,
+      payload: {
+        kind: "routine_fire",
+        routineId: routine.id,
+        key: "notified-occurrence",
+        instruction: routine.instruction,
+      },
+    },
+  });
+  await acknowledgeDelivery(userId, [row.id]);
+  expect(
+    (
+      await prisma.routineScratch.findUniqueOrThrow({
+        where: { routineId: routine.id },
+      })
+    ).lastToldKey,
+  ).toBe("notified-occurrence");
+});

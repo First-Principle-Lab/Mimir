@@ -15,6 +15,7 @@ import { SiteHeader } from "@/components/chat/site-header";
 import { Spotlight } from "@/components/chat/spotlight";
 import { MovingBorderButton } from "@/components/chat/moving-border-button";
 import { Reveal, SignalDot } from "@/components/chat/motion";
+import { ApprovalCard, type Approval } from "@/components/chat/approval-card";
 import { ThreadBubbles } from "@/components/chat/thread-bubbles";
 import { ConnectorsPanel } from "@/components/chat/connectors-panel";
 import {
@@ -98,6 +99,7 @@ function toThreadMessage(message: ApiMessage): ThreadMessage {
 
 export default function ChatPage() {
   const [view, setView] = useState<View>("loading");
+  const [approvals, setApprovals] = useState<Approval[]>([]);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [conversationId, setConversationId] = useState("");
   const [draft, setDraft] = useState("");
@@ -151,6 +153,17 @@ export default function ChatPage() {
     const data = (await res.json()) as Conversation;
     if (sequence !== refreshSequenceRef.current) return true;
     setConversationId(data.conversation.id);
+    const cards = await fetch(
+      API +
+        "/approvals?conversationId=" +
+        encodeURIComponent(data.conversation.id),
+      { credentials: "include" },
+    );
+    if (cards.ok && sequence === refreshSequenceRef.current)
+      setApprovals(
+        ((await cards.json()) as { approvals: Approval[] }).approvals,
+      );
+    if (sequence !== refreshSequenceRef.current) return true;
     for (const message of data.conversation.messages) {
       if (message.role === "assistant" && message.parentMessageId)
         completedInputsRef.current.add(message.parentMessageId);
@@ -280,13 +293,19 @@ export default function ChatPage() {
   }, [view, conversationId, refreshThread]);
 
   useEffect(() => {
-    if (!thinking) return;
+    if (
+      !thinking &&
+      !approvals.some((a) =>
+        ["approved", "executing", "pending"].includes(a.status),
+      )
+    )
+      return;
     // Heal a lost pub/sub notification without requiring a page reload.
     const timer = setInterval(() => {
       void refreshThread().catch(() => {});
     }, 3000);
     return () => clearInterval(timer);
-  }, [thinking, refreshThread]);
+  }, [thinking, approvals, refreshThread]);
 
   const autosize = useCallback(() => {
     const node = textareaRef.current;
@@ -514,6 +533,38 @@ export default function ChatPage() {
               onConnect={() => void connectByKey("google-mail")}
             />
 
+            {approvals.map((approval) => (
+              <ApprovalCard
+                key={approval.id}
+                approval={approval}
+                onDecision={async (card, approved) => {
+                  const res = await fetch(
+                    API +
+                      "/approvals/" +
+                      encodeURIComponent(card.id) +
+                      "/decision",
+                    {
+                      method: "POST",
+                      credentials: "include",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        approved,
+                        argumentHash: card.argumentHash,
+                      }),
+                    },
+                  );
+                  if (!res.ok) {
+                    const body = (await res.json().catch(() => null)) as {
+                      error?: { message?: string };
+                    } | null;
+                    throw new Error(
+                      body?.error?.message ?? "Could not save your decision",
+                    );
+                  }
+                  await refreshThread();
+                }}
+              />
+            ))}
             <div className="flex items-center gap-2 pt-6">
               <SignalDot />
               <span className="text-xs text-muted-foreground">

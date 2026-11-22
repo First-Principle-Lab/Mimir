@@ -51,6 +51,8 @@ function DraftCard({ text }: { text: string }) {
 }
 
 const components: Components = {
+  // Remote images can leak data even without a click. Keep their alt text.
+  img: ({ alt }) => <span>{alt}</span>,
   p: ({ children }) => <p className="my-1.5 first:mt-0 last:mb-0">{children}</p>,
   ul: ({ children }) => (
     <ul className="my-1.5 list-disc space-y-1 pl-5 marker:text-muted-foreground">{children}</ul>

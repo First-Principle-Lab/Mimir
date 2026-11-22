@@ -3,7 +3,8 @@
 Scope: all Phase 2 changes, including API intake, worker/session integration,
 forward migration, delivery, web client, watchers and scheduling. Phase 3 has not
 started. Findings are resolved and the immutable real-inference evaluation passes.
-Required PR CI remains the final completion gate; evidence is recorded below.
+Required CI passed on `002e5d7`; PR #4 was squash-merged into `dev` as
+`ab80704` after the follow-up audit below. Phase 2 is complete.
 
 ## Requirement audit
 
@@ -78,8 +79,8 @@ Required PR CI remains the final completion gate; evidence is recorded below.
   scenario results and inference/delivery evidence.
 - The previous published run records the scheduling fixture's deadline failure;
   no eval branch was amended, merged, rebased or deleted.
-- Subsequent changes only record this evidence. Required CI on the feature PR's
-  latest head must pass before Phase 2 is marked complete or Phase 3 begins.
+- Subsequent Phase 2 changes only record evidence and strengthen regression tests.
+  Required CI passed on the final feature head `002e5d7`, before Phase 3 began.
 
 ## Follow-up review
 
@@ -93,5 +94,6 @@ expires, and stale fires after a routine's timing changes or it is disabled.
 Frozen install, lint, typecheck, all **230 tests** (forced uncached), duplication
 check and the static export pass. The runtime, prompts and tool descriptions are
 unchanged from the published 23/23 inference run. Required CI passed on
-`8baa55a5b5bb47bd6072dc9cfdf092a2364846f6`; the added tests must also pass on the
-latest PR head before advancing to Phase 3.
+`8baa55a5b5bb47bd6072dc9cfdf092a2364846f6` and the final test/review head
+`002e5d7aaf01eb9d5df9ef5366c0777f42842bd8`. The phase completion gate passed
+before PR #4 was merged and Phase 3 started.

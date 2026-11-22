@@ -120,6 +120,19 @@ export async function scheduleHarnessRecovery(): Promise<void> {
 }
 export async function recoverHarnessWork(): Promise<void> {
   const prisma = getPrismaClient();
+  await prisma.actionApproval.updateMany({
+    where: { status: "pending", expiresAt: { lte: new Date() } },
+    data: { status: "expired" },
+  });
+  await prisma.agentRun.updateMany({
+    where: {
+      status: "waiting_human",
+      approvals: {
+        none: { status: { in: ["pending", "approved", "executing"] } },
+      },
+    },
+    data: { status: "interrupted", finishedAt: new Date() },
+  });
   const inputs = await prisma.inboxInput.findMany({
     where: {
       status: { in: ["pending", "running"] },

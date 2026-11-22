@@ -19,3 +19,4 @@ export type { FactHit } from "./facts.js";
 export { loadPrompt, interactionSystemPrompt } from "./prompts.js";
 export * from "./inbox.js";
 export * from "./notification-policy.js";
+export * from "./visible-content.js";
