@@ -2,8 +2,8 @@
 
 Scope: all Phase 2 changes, including API intake, worker/session integration,
 forward migration, delivery, web client, watchers and scheduling. Phase 3 has not
-started. Completion awaits immutable evaluation of the final implementation
-commit and required PR CI; evidence is recorded below.
+started. Findings are resolved and the immutable real-inference evaluation passes.
+Required PR CI remains the final completion gate; evidence is recorded below.
 
 ## Requirement audit
 
@@ -68,5 +68,15 @@ commit and required PR CI; evidence is recorded below.
 
 ## Published evidence
 
-The tested commit, immutable eval branch, final counts and required CI state will
-be recorded here and in the PR after the clean-commit evaluation.
+- Tested commit: `dc83533f5e130d4700a54b5087237d50802e3d9b`.
+- Model: `~deepseek/deepseek-v4-flash-latest`, actual OpenRouter inference.
+- Result: **23/23 scenarios pass**: all 12 Phase 1 regressions plus 11 Phase 2
+  scenarios. Notification precision **1.0**, recall **1.0**, wrongly silent **0**
+  on these fixtures. The final reminder fires at its requested time on BullMQ.
+- Immutable evidence: [eval/2026-11-22-harness-phase-2-inbox-completion-review-2](https://github.com/First-Principle-Lab/Mimir/tree/eval/2026-11-22-harness-phase-2-inbox-completion-review-2/evals/runs/20261122T175452Z-harness).
+  Its meta.json records the tested SHA; harness.jsonl and output.log contain the
+  scenario results and inference/delivery evidence.
+- The previous published run records the scheduling fixture's deadline failure;
+  no eval branch was amended, merged, rebased or deleted.
+- Subsequent changes only record this evidence. Required CI on the feature PR's
+  latest head must pass before Phase 2 is marked complete or Phase 3 begins.

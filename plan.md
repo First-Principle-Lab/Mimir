@@ -12,7 +12,7 @@ inference through HTTP intake, BullMQ, durable journals and socket delivery.
 The full requirement/evidence matrix is in [the Phase 1 review](docs/phase-1-review.md).
 Phase 1's published real-inference run and required CI passed; PR #3 is merged into
 `dev`. Phase 2 is implemented and under its [completion review](docs/phase-2-review.md),
-pending final immutable evaluation and PR CI. Phases 3–6 have not started. External writes are unavailable;
+with its 23/23 real-inference run passing and PR CI still pending. Phases 3–6 have not started. External writes are unavailable;
 existing chats retain their latest 50 text messages on first pi use and durable
 facts are preserved. Phase 2 adds inbox/notification scenarios, durable reminders
 and read-only watchers to the Phase 0/1 harness runner.
