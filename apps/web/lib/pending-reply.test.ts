@@ -32,3 +32,19 @@ test("polling preserves partial text until the matching durable reply arrives", 
     preservePendingStreams([input, reply], [input, stream], new Set(["input"])),
   ).toEqual([input, reply]);
 });
+
+test("one burst reply settles each covered client input", () => {
+  const reply = {
+    id: "reply",
+    role: "assistant",
+    parentMessageId: "a",
+    replyToMessageIds: ["a", "b"],
+  };
+  const messages = [
+    { id: "a", role: "user", clientMessageId: "client-a" },
+    { id: "b", role: "user", clientMessageId: "client-b" },
+    reply,
+  ];
+  expect(findReply(messages, "client-a")).toEqual(reply);
+  expect(findReply(messages, "client-b")).toEqual(reply);
+});

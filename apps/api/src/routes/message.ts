@@ -18,6 +18,7 @@ type StoredMessage = {
   durationMs: number | null;
   clientMessageId: string | null;
   parentMessageId: string | null;
+  replyToMessageIds?: string[];
   toolCalls?: unknown;
 };
 
@@ -35,6 +36,7 @@ function toWire(m: StoredMessage) {
     toolCalls: m.toolCalls ?? null,
     clientMessageId: m.clientMessageId,
     parentMessageId: m.parentMessageId,
+    replyToMessageIds: m.replyToMessageIds ?? [],
   };
 }
 
@@ -53,11 +55,9 @@ export function createMessageRouter(
   messageRouter.post("/message", requireAuth, async (req, res) => {
     const userId = req.userId;
     if (!userId) {
-      res
-        .status(401)
-        .json({
-          error: { code: "UNAUTHORIZED", message: "Not authenticated" },
-        });
+      res.status(401).json({
+        error: { code: "UNAUTHORIZED", message: "Not authenticated" },
+      });
       return;
     }
     const parsed = messageSchema.safeParse(req.body);
@@ -68,6 +68,9 @@ export function createMessageRouter(
       return;
     }
     const { conversationId, content, clientMessageId } = parsed.data;
+    // A standalone stop is a fixed control command, never an intent classifier.
+    const stop =
+      parsed.data.control === "stop" || content.trim().toLowerCase() === "stop";
 
     const conversation = await prisma.conversation.findUnique({
       where: { id: conversationId },
@@ -86,7 +89,14 @@ export function createMessageRouter(
     });
     if (existing) {
       const reply = await prisma.message.findFirst({
-        where: { parentMessageId: existing.id, role: "assistant" },
+        where: {
+          role: "assistant",
+          conversationId,
+          OR: [
+            { parentMessageId: existing.id },
+            { replyToMessageIds: { has: existing.id } },
+          ],
+        },
         orderBy: { createdAt: "asc" },
       });
       getLogger().info(
@@ -117,6 +127,20 @@ export function createMessageRouter(
             role: "user",
             content,
             status: "complete",
+          },
+        });
+        await tx.inboxInput.create({
+          data: {
+            conversationId,
+            kind: "user",
+            source: "user:http",
+            messageId: msg.id,
+            dedupeKey: `user:${msg.id}`,
+            payload: {
+              kind: "user",
+              text: content,
+              ...(stop ? { control: "stop" } : {}),
+            },
           },
         });
         const row = await tx.outboxEvent.create({
@@ -161,11 +185,9 @@ export function createMessageRouter(
   messageRouter.get("/conversation", requireAuth, async (req, res) => {
     const userId = req.userId;
     if (!userId) {
-      res
-        .status(401)
-        .json({
-          error: { code: "UNAUTHORIZED", message: "Not authenticated" },
-        });
+      res.status(401).json({
+        error: { code: "UNAUTHORIZED", message: "Not authenticated" },
+      });
       return;
     }
     let conversation = await prisma.conversation.findFirst({

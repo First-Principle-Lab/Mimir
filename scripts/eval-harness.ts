@@ -27,7 +27,8 @@ for (const name of ["DATABASE_URL", "REDIS_URL"] as const) {
   }
 }
 
-const { getConfig, getPrismaClient } = await import("@mimir/backend-core");
+const { getConfig, getPrismaClient } =
+  await import("../packages/backend-core/src/index.js");
 const { createMessageRouter } =
   await import("../apps/api/src/routes/message.js");
 const { initSocket, initPubSub } =
@@ -359,6 +360,10 @@ try {
     where: { id: { in: fixtureConversations } },
   });
   const userFilter = { userId: { in: fixtureUsers } };
+  for (const userId of fixtureUsers)
+    await prisma.outboxEvent.deleteMany({
+      where: { payload: { path: ["userId"], equals: userId } },
+    });
   await prisma.integrationConnection.deleteMany({ where: userFilter });
   await prisma.modelCallLog.deleteMany({ where: userFilter });
   await prisma.analyticsEvent.deleteMany({ where: userFilter });

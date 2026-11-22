@@ -15,6 +15,7 @@ export interface PushPayload {
   title: string;
   body: string;
   url?: string;
+  tag?: string;
 }
 
 // Set VAPID details once. web-push validates at send time, not here — missing

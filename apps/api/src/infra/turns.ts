@@ -29,6 +29,7 @@ export async function enqueueTurn(input: TurnInput): Promise<boolean> {
   try {
     await turnsQueue().add("turn", input, {
       jobId: `turn-${input.messageId}`,
+      delay: 1000,
       attempts: 3,
       backoff: { type: "exponential", delay: 1000 },
       removeOnComplete: 1000,

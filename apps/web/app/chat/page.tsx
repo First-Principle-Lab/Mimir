@@ -67,6 +67,7 @@ interface ApiMessage {
   toolCalls?: EmailToolCall | null;
   clientMessageId?: string | null;
   parentMessageId?: string | null;
+  replyToMessageIds?: string[];
 }
 
 interface Conversation {
@@ -153,6 +154,8 @@ export default function ChatPage() {
     for (const message of data.conversation.messages) {
       if (message.role === "assistant" && message.parentMessageId)
         completedInputsRef.current.add(message.parentMessageId);
+      for (const id of message.replyToMessageIds ?? [])
+        completedInputsRef.current.add(id);
     }
     const thread = data.conversation.messages.map(toThreadMessage);
     setMessages((previous) =>
@@ -222,7 +225,9 @@ export default function ChatPage() {
     socket.on("connect", () => {
       void refreshThread().catch(() => {});
     });
-    socket.on("new_message", () => {
+    socket.on("new_message", (event: { deliveryIds?: string[] } = {}) => {
+      if (event.deliveryIds?.length)
+        socket.emit("delivery_ack", event.deliveryIds);
       void maybeNotifyDesktop("Mimir", "New activity in your thread");
       refreshThread().catch((err) =>
         console.error("[socket] conversation refetch failed", err),
@@ -292,7 +297,7 @@ export default function ChatPage() {
 
   const post = useCallback(
     async (content: string) => {
-      if (!content || thinking || !conversationId) return;
+      if (!content || !conversationId) return;
       setDraft("");
       setThinking(true);
       setError(null);
@@ -336,12 +341,12 @@ export default function ChatPage() {
         setError("Couldn't send your message. Please try again.");
       }
     },
-    [thinking, conversationId, refreshThread, router],
+    [conversationId, refreshThread, router],
   );
 
   const send = useCallback(() => {
-    const text = draft.trim();
-    if (!text || thinking) return;
+    const text = draft.trim() || (thinking ? "stop" : "");
+    if (!text) return;
     setListening(false);
     post(text);
   }, [draft, thinking, post]);
@@ -569,8 +574,8 @@ export default function ChatPage() {
 
             <MovingBorderButton
               onClick={send}
-              disabled={thinking || draft.trim().length === 0}
-              aria-label="Send"
+              disabled={!thinking && draft.trim().length === 0}
+              aria-label={thinking && !draft.trim() ? "Stop" : "Send"}
               className="px-3 py-2"
             >
               {thinking ? <SignalDot /> : <ArrowUp className="size-4" />}

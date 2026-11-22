@@ -5,13 +5,19 @@ import {
   scheduleFactExtractionSweep,
   scheduleGithubHookSweep,
   scheduleWatchRenewal,
+  scheduleHarnessRecovery,
   startWorkers,
 } from "./infra/queues.js";
 import { startOutboxRelay } from "./infra/outbox-relay.js";
+import { startRoutineWebhooks } from "./routines/webhooks.js";
 
 getConfig();
 startWorkers();
 startOutboxRelay();
+startRoutineWebhooks();
+void scheduleHarnessRecovery().catch((e) =>
+  getLogger().error({ err: e }, "failed to schedule harness recovery"),
+);
 void removeObsoleteSchedulers().catch((e) =>
   getLogger().error({ err: e }, "failed to remove obsolete schedulers"),
 );

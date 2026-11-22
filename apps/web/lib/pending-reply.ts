@@ -3,6 +3,7 @@ interface ReplyMessage {
   role: string;
   clientMessageId?: string | null;
   parentMessageId?: string | null;
+  replyToMessageIds?: string[];
 }
 
 // Correlate replies to the submitted input: an older assistant message must
@@ -16,7 +17,10 @@ export function findReply<T extends ReplyMessage>(
   );
   return input
     ? messages.find(
-        (m) => m.role === "assistant" && m.parentMessageId === input.id,
+        (m) =>
+          m.role === "assistant" &&
+          (m.parentMessageId === input.id ||
+            m.replyToMessageIds?.includes(input.id)),
       )
     : undefined;
 }

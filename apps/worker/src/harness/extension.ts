@@ -2,7 +2,10 @@ import {
   createToolSearchExtension,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import { HARNESS_TOOL_OUTPUT_MAX_CHARS } from "@mimir/backend-core";
+import {
+  getPrismaClient,
+  HARNESS_TOOL_OUTPUT_MAX_CHARS,
+} from "@mimir/backend-core";
 import {
   describeToolError,
   isReadOnly,
@@ -65,9 +68,40 @@ export function mimirExtension(
         parameters: spec.parameters as never,
         exposure: spec.deferred ? "deferred" : "direct",
         defaultActive: !spec.deferred,
-        execute: async (_toolCallId, params) => {
+        execute: async (toolCallId, params, signal) => {
+          let onAbort: (() => void) | undefined;
           try {
-            const value = await spec.execute(params, opts.ctx);
+            if (!isReadOnly(spec)) {
+              if (!opts.ctx.runId)
+                throw new Error("Internal mutations require a journaled run");
+              await getPrismaClient().actionAttempt.upsert({
+                where: {
+                  runId_toolCallId: { runId: opts.ctx.runId, toolCallId },
+                },
+                create: {
+                  runId: opts.ctx.runId,
+                  toolCallId,
+                  toolName: spec.name,
+                },
+                update: {},
+              });
+            }
+            const aborted = new Promise<never>((_resolve, reject) => {
+              onAbort = () => reject(new Error("Tool execution interrupted"));
+              if (signal?.aborted) onAbort();
+              else signal?.addEventListener("abort", onAbort, { once: true });
+            });
+            const value = await Promise.race([
+              spec.execute(params, { ...opts.ctx, toolCallId, signal }),
+              aborted,
+            ]);
+            if (!isReadOnly(spec))
+              await getPrismaClient().actionAttempt.update({
+                where: {
+                  runId_toolCallId: { runId: opts.ctx.runId!, toolCallId },
+                },
+                data: { status: "succeeded" },
+              });
             return {
               content: [{ type: "text", text: renderToolResult(spec, value) }],
               details: {},
@@ -83,6 +117,8 @@ export function mimirExtension(
               details: {},
               isError: true,
             };
+          } finally {
+            if (onAbort) signal?.removeEventListener("abort", onAbort);
           }
         },
       });
@@ -97,7 +133,11 @@ export function mimirExtension(
           block: true,
           reason: `There is no tool named ${event.toolName}.`,
         };
-      if (!isReadOnly(spec)) {
+      const internal =
+        ["send_to_user", "schedule"].includes(spec.name) &&
+        spec.provenance === "mimir:harness/internal" &&
+        spec.risk === "write_reversible_self";
+      if (!isReadOnly(spec) && !internal) {
         return {
           block: true,
           reason:
