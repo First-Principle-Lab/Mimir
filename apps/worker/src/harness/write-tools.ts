@@ -121,7 +121,10 @@ function spec(
     name,
     label,
     description,
-    parameters: schema.toJSONSchema(),
+    // Input mode: pi validates calls against this schema, and output mode
+    // would mark every field with a default (calendarId, attendees, body,
+    // text) as required.
+    parameters: schema.toJSONSchema({ io: "input" }),
     risk,
     sideEffect: "irreversible",
     idempotent: false,
