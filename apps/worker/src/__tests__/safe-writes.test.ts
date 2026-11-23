@@ -389,6 +389,25 @@ test("all write families use validated provider paths and require review where a
   await resumeApproval(await answer(pending.approvalId, ctx), tools, ctx);
   expect(requests).toEqual(["/repos/fixture/repo/issues"]);
 });
+test("fields with defaults are optional in the schemas the model is validated against", async () => {
+  const tools = await writeToolsFor(userId, () => async () => ({
+    status: 200,
+    data: {},
+  }));
+  const required = (name: string) =>
+    (tools.find((s) => s.name === name)!.parameters as { required?: string[] })
+      .required ?? [];
+  expect(required("calendar_create_event").sort()).toEqual([
+    "end",
+    "start",
+    "summary",
+  ]);
+  expect(required("github_create_issue").sort()).toEqual(["repo", "title"]);
+  expect(required("notion_create_page").sort()).toEqual([
+    "parentPageId",
+    "title",
+  ]);
+});
 test("calendar updates keep the guest list unless attendees are listed", async () => {
   const ctx = await context();
   const requests: { query?: unknown; body?: unknown }[] = [];
