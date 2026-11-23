@@ -8,6 +8,7 @@ import {
   turnRetryPolicy,
 } from "./queues.js";
 import { pollLoop } from "./poll-loop.js";
+import { agentJobId, agentJobs } from "../harness/agents.js";
 
 const prisma = getPrismaClient();
 
@@ -15,12 +16,14 @@ export interface OutboxQueues {
   turns: Queue;
   facts: Queue;
   maintenance: Queue;
+  agents?: Queue;
 }
 
 const defaultQueues = (): OutboxQueues => ({
   turns: conversationTurns,
   facts: factExtractionJobs,
   maintenance: maintenanceJobs,
+  agents: agentJobs,
 });
 
 // Map one outbox row to the BullMQ job it stands for, or null when the row is
@@ -80,6 +83,15 @@ function jobFor(
           "github-hook-register",
           { userId: p.userId },
           { ...retryPolicy, jobId: `gh-hook-${row.id}` },
+        );
+    case "agent_run":
+      // Same jobId as spawn_agent's fast path.
+      if (typeof p.runId !== "string" || !q.agents) return null;
+      return () =>
+        q.agents!.add(
+          "agent",
+          { runId: p.runId },
+          { ...retryPolicy, jobId: agentJobId(p.runId as string) },
         );
     default:
       return null;

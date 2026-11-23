@@ -30,6 +30,7 @@ import { readToolsFor, type ToolRunContext } from "./tools.js";
 import { toolsFor } from "./capabilities.js";
 import { interruptStartedActions } from "./actions.js";
 import { resumeApproval } from "./approvals.js";
+import { activeAgents, agentTools } from "./agent-tools.js";
 import {
   claimInputs,
   inputText,
@@ -344,7 +345,9 @@ async function runConversation(
       assertOwned,
       sanitize,
     }),
+    ...agentTools(),
   );
+  const agents = await activeAgents(conversationId);
   if (inputs.some((i) => i.kind === "approval_answer")) {
     const controller = new AbortController();
     const deadline = setTimeout(
@@ -389,6 +392,7 @@ async function runConversation(
           now: options.now?.() ?? new Date(),
           timezone: user?.timezone ?? null,
           facts,
+          agents,
         }) +
         (interruptedBefore.length
           ? "\n<action_status>Prior actions were interrupted and may have reached their providers: " +

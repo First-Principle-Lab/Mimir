@@ -30,9 +30,9 @@ export function inputText(inputs: Input[]): string {
         case "user":
           return p.text;
         case "agent_result":
-          return renderToolResult(
-            { name: "agent_result", resultTrust: "untrusted" },
-            p,
+          return (
+            `A background agent you started finished with runtime status ${p.status}. Its report and any proposed actions follow. Decide whether the user needs it: use send_to_user with task_completed for requested work. Proposed actions have not run; request one only through the real tool, where approval applies.\n` +
+            renderToolResult({ name: "agent_result", resultTrust: "untrusted" }, p)
           );
         case "event":
         case "routine_fire":

@@ -16,7 +16,11 @@ export { trackEvent } from "./analytics.js";
 export { trackModelCall, backfillCost, rollDailyUsage } from "./usage.js";
 export { searchActiveFacts, searchActiveFactsWithRelations } from "./facts.js";
 export type { FactHit } from "./facts.js";
-export { loadPrompt, interactionSystemPrompt } from "./prompts.js";
+export {
+  loadPrompt,
+  interactionSystemPrompt,
+  workerSystemPrompt,
+} from "./prompts.js";
 export * from "./inbox.js";
 export * from "./notification-policy.js";
 export * from "./visible-content.js";

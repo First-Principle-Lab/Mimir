@@ -221,10 +221,27 @@ model AgentRun {
   finishedAt       DateTime?
   journal          AgentStep[]
   approvals        ActionApproval[]
+  // Background agents (trigger "agent"). Depth 1 runs are spawned by an
+  // interaction run; depth 2 runs are in-turn delegations of a depth 1 run.
+  // rootRunId is the depth 1 run, so a whole task can be costed and canceled.
+  parentRunId      String?
+  parent           AgentRun?    @relation("AgentRunTree", fields: [parentRunId], references: [id], onDelete: Cascade)
+  children         AgentRun[]   @relation("AgentRunTree")
+  rootRunId        String?
+  depth            Int          @default(0)
+  definitionId     String?
+  definition       AgentDefinition? @relation(fields: [definitionId], references: [id])
+  brief            Json?
+  result           Json?
+  budgetUsd        Float?
+  messages         AgentMessage[]
 
   @@unique([inputMessageId])
   @@index([conversationId, startedAt])
   @@index([status])
+  @@index([parentRunId])
+  @@index([rootRunId])
+  @@index([userId, trigger, status])
 }
 
 // Typed inputs are durable independently of BullMQ jobs. A single run can
@@ -369,6 +386,40 @@ model EmailDraft {
   createdAt      DateTime @default(now())
 
   @@index([userId, conversationId])
+}
+
+// Agent definitions are data: prompt, tools, model role, memory scope and
+// limits. userId null marks a built-in available to everyone.
+model AgentDefinition {
+  id          String   @id
+  userId      String?
+  name        String
+  description String
+  prompt      String   @db.Text
+  tools       Json     // tool names, or ["*"] for every read tool the user has
+  modelRole   String   @default("subagent")
+  memoryScope String   @default("conversation") // conversation | none
+  canSpawn    Boolean  @default(false)
+  maxSteps    Int
+  maxUsd      Float
+  timeoutSec  Int
+  createdAt   DateTime @default(now())
+  runs        AgentRun[]
+
+  @@unique([userId, name])
+}
+
+// Follow-up instructions from the parent (message_agent), steered into the
+// running agent at its next tool boundary.
+model AgentMessage {
+  id         String    @id @default(uuid())
+  runId      String
+  run        AgentRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  text       String    @db.Text
+  createdAt  DateTime  @default(now())
+  consumedAt DateTime?
+
+  @@index([runId, consumedAt])
 }
 
 model AgentStep {

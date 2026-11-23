@@ -10,8 +10,24 @@ export const inboxPayload = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("agent_result"),
     agentRunId: z.string(),
-    status: z.enum(["succeeded", "failed", "interrupted"]),
+    // Set by the runtime, never by the agent's own text.
+    status: z.enum([
+      "succeeded",
+      "failed",
+      "interrupted",
+      "timeout",
+      "budget_exceeded",
+    ]),
     text: z.string(),
+    proposedActions: z
+      .array(
+        z.object({
+          tool: z.string(),
+          arguments: z.record(z.string(), z.json()),
+          reason: z.string(),
+        }),
+      )
+      .optional(),
   }),
   z.object({
     kind: z.literal("event"),
