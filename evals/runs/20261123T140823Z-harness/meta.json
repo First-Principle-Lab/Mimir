@@ -1,0 +1,14 @@
+{
+  "topic": "phase-4-followups",
+  "suite": "harness",
+  "status": "failed",
+  "exitCode": 1,
+  "testedCommit": "a4cfc0c7769985b995574ea42d06b1a6ffd88358",
+  "testedRef": "feat/phase-4-followups",
+  "branch": "eval/2026-11-23-harness-phase-4-followups",
+  "runId": "20261123T140823Z-harness",
+  "startedAt": "2026-11-23T14:08:23Z",
+  "finishedAt": "2026-11-23T14:13:30Z",
+  "runner": "local",
+  "runUrl": null
+}
