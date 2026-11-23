@@ -266,4 +266,15 @@ test("a faulty adapter cannot return another tenant's facts or transcript", asyn
   const boundary = new MemoryGateway(faulty);
   expect(await boundary.search(p, "user", "private")).toEqual([]);
   expect(await boundary.conversationSearch(p, "user", "private")).toEqual([]);
+  const badWrite: MemoryProvider = Object.assign(Object.create(provider), {
+    remember: async () =>
+      (await faulty.search(ns, "", new AbortController().signal))[0],
+  });
+  await expect(
+    new MemoryGateway(badWrite).remember(p, "user", {
+      subject: "symposium",
+      fact: "The symposium is Friday",
+      sourceMessageId: source,
+    }),
+  ).rejects.toThrow("unauthorized or unsafe write result");
 });

@@ -254,7 +254,13 @@ export class MemoryGateway {
         if (!source)
           throw new Error("Memory requires an owned user-message source");
         s.throwIfAborted();
-        return this.provider.remember(ns, input, s);
+        const result = await this.provider.remember(ns, input, s);
+        const visible = await this.visibleRecords(ns, [result], true);
+        if (!visible.length)
+          throw new Error(
+            "Memory provider returned an unauthorized or unsafe write result",
+          );
+        return visible[0]!;
       },
       signal,
     );
