@@ -19,6 +19,11 @@ import {
 import { runWatchRenewal } from "../integrations/gmail/watch-renewal.js";
 import { runConnectionCanary } from "../integrations/connection-canary.js";
 import { routineJobs, runRoutine, syncRoutine } from "../routines/routines.js";
+import {
+  agentJobs,
+  recoverStaleAgents,
+  runAgentJob,
+} from "../harness/agents.js";
 import { publishUserEvent } from "./redis.js";
 
 // Queue name kept from the old pipeline so its existing job schedulers in Redis
@@ -133,6 +138,7 @@ export async function recoverHarnessWork(): Promise<void> {
     },
     data: { status: "interrupted", finishedAt: new Date() },
   });
+  await recoverStaleAgents();
   const inputs = await prisma.inboxInput.findMany({
     where: {
       status: { in: ["pending", "running"] },
@@ -251,6 +257,8 @@ export function startWorkers(): Worker[] {
     // serializes turns within one conversation.
     [conversationTurns, turnProcessor, { concurrency: 20 }],
     [routineJobs, (job) => runRoutine(job), { concurrency: 10 }],
+    // Per-user running limits are enforced inside the job.
+    [agentJobs, runAgentJob, { concurrency: 10 }],
     [maintenanceJobs, maintenanceProcessor, { concurrency: 20 }],
     [factExtractionJobs, factExtractionProcessor, { concurrency: 4 }],
   ];

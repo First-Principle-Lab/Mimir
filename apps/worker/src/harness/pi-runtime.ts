@@ -56,6 +56,17 @@ export function interactionModelId(): string {
   return interactionConfig().model;
 }
 
+// A background agent's definition names its model-config.json role
+// ("subagent" by default), so leaf workers can run on a cheaper model than
+// the interaction agent. Unknown roles fall back to the interaction model.
+export function agentConfig(role = "subagent"): ReturnType<typeof llmConfigFor> {
+  try {
+    return llmConfigFor(role);
+  } catch {
+    return interactionConfig();
+  }
+}
+
 export class ModelNotAvailableError extends Error {
   constructor(modelId: string) {
     super(`Model "${modelId}" is not available through OpenRouter`);
@@ -68,6 +79,8 @@ export interface OpenSessionOptions extends MimirExtensionOptions {
   history?: { role: string; content: string; createdAt: Date }[];
   modelId?: string;
   uiContext?: ExtensionUIContext;
+  // Defaults to the interaction agent's prompt and model settings.
+  systemPrompt?: string;
 }
 
 // Tests swap in pi's scripted faux provider so the whole harness runs in CI
@@ -89,7 +102,7 @@ export async function openSession(
   const model = modelOverride?.model ?? mr.getModel("openrouter", modelId);
   if (!model) throw new ModelNotAvailableError(modelId);
 
-  const systemPrompt = interactionSystemPrompt();
+  const systemPrompt = opts.systemPrompt ?? interactionSystemPrompt();
   const sessionManager = SessionManager.inMemory(
     piDir,
     undefined,
@@ -138,7 +151,10 @@ export async function openSession(
     noThemes: true,
     systemPromptOverride: () => systemPrompt,
     extensionFactories: [
-      mimirExtension({ ...opts, generation: interactionConfig() }),
+      mimirExtension({
+        ...opts,
+        generation: opts.generation ?? interactionConfig(),
+      }),
     ],
   });
   await resourceLoader.reload();

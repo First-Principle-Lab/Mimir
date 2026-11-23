@@ -24,3 +24,9 @@ export function loadPrompt(name: string): string {
 export function interactionSystemPrompt(): string {
   return loadPrompt("interaction.md");
 }
+
+// Background and delegated agents share one static worker prompt; the agent
+// definition's own instructions are appended after it.
+export function workerSystemPrompt(): string {
+  return loadPrompt("worker.md");
+}

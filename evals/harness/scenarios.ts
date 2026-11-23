@@ -34,6 +34,8 @@ const defaults = {
     "github_comment_issue",
     "github_update_issue",
     "browser_submit",
+    // Short requests are answered inline, never delegated.
+    "spawn_agent",
     "bash",
     "write",
     "edit",

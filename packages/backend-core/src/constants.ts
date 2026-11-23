@@ -30,6 +30,16 @@ export const HARNESS_LOCK_TTL_MS = 150_000; // per-conversation run lock; > HARN
 export const HARNESS_FACTS_MIN_MESSAGES = 50; // inject remembered facts into the runtime context once a thread is this long
 export const HARNESS_LEGACY_HISTORY_LIMIT = 50; // seed this many v1 messages on the first pi turn; older facts remain searchable
 
+// Background agents (Phase 4). The interaction agent is depth 0; its background
+// agents are depth 1 and may delegate in-turn to depth-2 leaves, which cannot spawn.
+export const AGENT_MAX_DEPTH = 2;
+export const AGENT_MAX_CHILDREN = 5; // children (background or in-turn) one run may start
+export const AGENT_MAX_ACTIVE_PER_USER = 5; // queued + running background agents; spawn_agent refuses beyond this
+export const AGENT_MAX_RUNNING_PER_USER = 3; // running at once; extra queued agents wait their turn
+export const AGENT_ROOT_MAX_USD = 0.5; // cost ceiling for one top-level task (a background agent and all its children)
+export const AGENT_RESULT_MAX_CHARS = 6_000; // summary posted back to the parent
+export const AGENT_STALE_MS = 30 * 60_000; // an unfinished agent older than this is reported interrupted by recovery
+
 // How many active ExtractedFacts to inject into reply context on a top-K embedding
 // search. Bounded to keep prompt context lean.
 export const FACT_EXTRACTION_TOP_K = 5;

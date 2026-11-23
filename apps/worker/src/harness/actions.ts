@@ -42,8 +42,15 @@ export function decideAction(
   // Only Mimir's fixed internal capabilities can mutate without a card in an
   // ambient turn. Unknown/custom capabilities never inherit this exception.
   const internal = spec.provenance === "mimir:harness/internal";
+  // Ambient work can't start durable work of its own (loop prevention).
   if (ctx.safety?.ambient && internal && spec.name === "schedule")
     return { decision: "block", risk, reason: "Schedules require a user turn" };
+  if (ctx.safety?.ambient && internal && spec.name === "spawn_agent")
+    return {
+      decision: "block",
+      risk,
+      reason: "Background agents can only be started from a user turn",
+    };
   if (ctx.safety?.ambient && !internal)
     return { decision: "approve", risk, reason: "unattended_action" };
   if (risk === "write_reversible_self" && internal)

@@ -17,8 +17,12 @@ squash-merged into `dev` as `ab80704`. Phase 3 is implemented and reviewed in
 [PR #5](https://github.com/First-Principle-Lab/Mimir/pull/5): journaled write tools,
 exact-argument approval cards, 255 passing tests, 33/33 real-inference scenarios
 and 12 red-team checks on `b135214`. The [completion review](docs/phase-3-review.md)
-records the requirement audit, 14 resolved findings and immutable evidence. Phase 4
-starts after PR #5 is in `dev`; Phases 5–6 have not started.
+records the requirement audit, 14 resolved findings and immutable evidence; PR #5 was
+squash-merged into `dev` as `6831b62`. Phase 4 adds background agents, in-turn
+delegation, budgets and cascade cancel; its [completion review](docs/phase-4-review.md)
+records 13 resolved findings. A Phase 3 schema defect found afterwards was fixed in
+#7. The integrated gate on `64d4e1d` (Phases 3–4 with #7) passed 268 tests, 38/38 real-inference
+scenarios and 12 red-team checks: `eval/2026-11-23-harness-phase-3-4-completion`. Phases 5–6 have not started.
 Existing chats retain their latest 50 text messages on first pi use and durable
 facts are preserved. Phase 2 adds inbox/notification scenarios, durable reminders
 and read-only watchers to the Phase 0/1 harness runner.

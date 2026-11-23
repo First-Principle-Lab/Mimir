@@ -8,6 +8,8 @@ export interface RuntimeContextInput {
   now: Date;
   timezone: string | null;
   facts: Pick<FactHit, "subject" | "fact">[];
+  // The interaction agent sees its active background agents; workers omit it.
+  agents?: { id: string; agent: string; status: string; objective: string }[];
 }
 
 function validTimezone(tz: string | null): string {
@@ -92,8 +94,18 @@ export function buildRuntimeContext(input: RuntimeContextInput): string {
     `Current local time: ${formatLocalTime(input.now, input.timezone)}`,
     `User time zone: ${validTimezone(input.timezone)}${input.timezone ? "" : " (not set; assume UTC and say so if it matters)"}`,
     `Today's calendar range, already converted to UTC (start inclusive, end exclusive): ${today.start} to ${today.end}. Use these exact instants for the whole local day; DST can make it 23 or 25 hours.`,
-    "Running background agents: none (not enabled yet)",
   ];
+  if (input.agents) {
+    lines.push(
+      input.agents.length
+        ? "Active background agents (results arrive as separate inputs):"
+        : "Active background agents: none",
+    );
+    for (const a of input.agents)
+      lines.push(
+        `- ${a.id} (${a.agent}, ${a.status}): ${a.objective.slice(0, 160)}`,
+      );
+  }
   if (input.facts.length > 0) {
     lines.push("Remembered facts (may be outdated):");
     for (const f of input.facts) lines.push(`- ${f.subject}: ${f.fact}`);

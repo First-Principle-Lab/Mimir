@@ -21,7 +21,7 @@ import {
   type FactHit,
   type InputJsonValue,
 } from "@mimir/backend-core";
-import { DelayedError, type Job } from "bullmq";
+import { DelayedError, type Job, type Queue } from "bullmq";
 import { publishUserEvent, redis } from "../infra/redis.js";
 import { buildRuntimeContext } from "./context.js";
 import { ModelNotAvailableError } from "./pi-runtime.js";
@@ -30,6 +30,7 @@ import { readToolsFor, type ToolRunContext } from "./tools.js";
 import { toolsFor } from "./capabilities.js";
 import { interruptStartedActions } from "./actions.js";
 import { resumeApproval } from "./approvals.js";
+import { activeAgents, agentTools } from "./agent-tools.js";
 import {
   claimInputs,
   inputText,
@@ -45,6 +46,8 @@ import { responseTools } from "./response-tools.js";
 export interface TurnOptions {
   readTools?: typeof readToolsFor;
   now?: () => Date;
+  // Where spawn_agent enqueues background agents (default: the agent queue).
+  agentQueue?: Queue;
 }
 
 const prisma = getPrismaClient();
@@ -344,7 +347,9 @@ async function runConversation(
       assertOwned,
       sanitize,
     }),
+    ...agentTools({ queue: options.agentQueue }),
   );
+  const agents = await activeAgents(conversationId);
   if (inputs.some((i) => i.kind === "approval_answer")) {
     const controller = new AbortController();
     const deadline = setTimeout(
@@ -389,6 +394,7 @@ async function runConversation(
           now: options.now?.() ?? new Date(),
           timezone: user?.timezone ?? null,
           facts,
+          agents,
         }) +
         (interruptedBefore.length
           ? "\n<action_status>Prior actions were interrupted and may have reached their providers: " +
