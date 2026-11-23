@@ -3,7 +3,7 @@ import type { FactHit } from "@mimir/backend-core";
 
 // The per-turn runtime context: everything volatile the model needs that must
 // NOT live in the system prompt (that stays static so the provider can cache it).
-// Injected right before the latest user message on every model call, never stored.
+// Appended after recent messages on every model call, never stored.
 
 export interface RuntimeContextInput {
   now: Date;
