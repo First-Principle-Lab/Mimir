@@ -90,6 +90,9 @@ export interface OpenSessionOptions extends MimirExtensionOptions {
   uiContext?: ExtensionUIContext;
   // Defaults to the interaction agent's prompt and model settings.
   systemPrompt?: string;
+  // Recheck cancellation/budgets after pre-prompt compaction, which can itself
+  // consume a model call and exhaust the caller's remaining budget.
+  assertCanPrompt?: () => void;
   onCompactionUsage?: (usage: {
     input: number;
     output: number;
@@ -198,7 +201,6 @@ export async function openSession(
             undefined,
             routingSessionId(opts.ctx.userId, opts.ctx.conversationId),
           );
-          if (result.usage) opts.onCompactionUsage?.(result.usage);
           if (result.usage)
             await trackModelCall({
               userId: opts.ctx.userId,
@@ -216,6 +218,7 @@ export async function openSession(
               },
               costCents: Math.round(result.usage.cost.total * 100),
             });
+          if (result.usage) opts.onCompactionUsage?.(result.usage);
           return result;
         },
         contextWindow: model.contextWindow,
@@ -248,6 +251,7 @@ export async function openSession(
   const prompt = session.prompt.bind(session);
   session.prompt = async (text, options) => {
     await prepareSessionContext(session, model.contextWindow, text);
+    opts.assertCanPrompt?.();
     return prompt(text, options);
   };
   return session;

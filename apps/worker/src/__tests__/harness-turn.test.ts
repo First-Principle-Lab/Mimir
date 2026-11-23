@@ -1093,6 +1093,50 @@ test("runTurn delivers and journals its answer after pre-prompt compaction", asy
   }
 });
 
+test("compaction can exhaust a budget without starting another model call", async () => {
+  let exhausted = false;
+  let calls = 0;
+  faux.setResponses([
+    () => {
+      calls++;
+      return fauxAssistantMessage([
+        fauxText("Summary of transient exercises."),
+      ]);
+    },
+    () => {
+      calls++;
+      return fauxAssistantMessage([fauxText("This call must not run.")]);
+    },
+  ]);
+  const session = await openSession({
+    entries: [],
+    specs: [],
+    ctx: { userId, conversationId },
+    contextWindow: 4096,
+    history: Array.from({ length: 80 }, (_, i) => ({
+      role: i % 2 ? "assistant" : "user",
+      content: "Transient exercise. ".repeat(30),
+      createdAt: new Date(i + 1),
+    })),
+    systemPrompt: "Synthetic budget test",
+    runtimeContext: () => "",
+    onCompactionUsage: () => {
+      exhausted = true;
+    },
+    assertCanPrompt: () => {
+      if (exhausted) throw new Error("budget exhausted");
+    },
+  });
+  try {
+    await expect(session.prompt("Continue the task")).rejects.toThrow(
+      "budget exhausted",
+    );
+    expect(calls).toBe(1);
+  } finally {
+    session.dispose();
+  }
+});
+
 test("zero-usage legacy history compacts through pi and reloads its checkpoint", async () => {
   const history = Array.from({ length: 80 }, (_, i) => ({
     role: i % 2 ? "assistant" : "user",

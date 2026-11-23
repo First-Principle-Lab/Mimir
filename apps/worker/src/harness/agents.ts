@@ -454,6 +454,10 @@ export async function executeAgent(
           throw new Error("Agent compaction exhausted its budget");
         }
       },
+      assertCanPrompt: () => {
+        if (stopped)
+          throw new Error("Agent was stopped before generation: " + stopped);
+      },
       modelId: config.model,
       generation: config,
       systemPrompt: workerSystemPrompt() + "\n\n# Your role\n\n" + def.prompt,
