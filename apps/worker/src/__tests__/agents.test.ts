@@ -702,3 +702,104 @@ test("proposals aimed at recipients or sites the brief never named are tagged", 
   // A definition's unknown model role falls back to the interaction model.
   expect(agentConfig("no-such-role")).toEqual(interactionConfig());
 });
+
+test("a retried agent keeps earlier corrections and closes helpers orphaned by the crash", async () => {
+  const run = await backgroundAgent("researcher", "Summarize the quarter");
+  const orphan = await createAgentRun({
+    parent: run,
+    definition: (await findDefinition(userId, "reader"))!,
+    brief: { objective: "helper from the crashed attempt" },
+  });
+  await prisma.agentRun.update({
+    where: { id: run.id },
+    data: { status: "running", steps: 3 },
+  });
+  await prisma.agentMessage.createMany({
+    data: [
+      { runId: run.id, text: "Use the Q3 numbers", consumedAt: new Date() },
+      { runId: run.id, text: "Skip the appendix" },
+    ],
+  });
+  faux.setResponses([reply([fauxText("Q3 summary without the appendix.")])]);
+  await runAgentJob(job(run.id));
+  const opening = textOf(seen[0]!.messages.at(-1)!);
+  expect(opening).toContain("Use the Q3 numbers");
+  expect(opening).toContain("Skip the appendix");
+  expect(
+    (await prisma.agentRun.findUniqueOrThrow({ where: { id: orphan.id } }))
+      .status,
+  ).toBe("interrupted");
+  const done = await prisma.agentRun.findUniqueOrThrow({ where: { id: run.id } });
+  expect(done.status).toBe("succeeded");
+  // Steps from the crashed attempt still count against the budget.
+  expect(done.steps).toBe(4);
+  expect(
+    await prisma.agentMessage.count({ where: { runId: run.id, consumedAt: null } }),
+  ).toBe(0);
+});
+
+test("a refused spawn or message is a plain error, not an uncertain journaled action", async () => {
+  const owner = await prisma.user.create({
+    data: { id: `agents-limit-${randomUUID()}`, email: `${randomUUID()}@test.local`, passwordHash: "x" },
+  });
+  const convo = await prisma.conversation.create({ data: { userId: owner.id } });
+  try {
+    const turn = await prisma.agentRun.create({
+      data: { conversationId: convo.id, userId: owner.id, trigger: "user" },
+    });
+    const ctx = { ...chatCtx(turn.id), userId: owner.id, conversationId: convo.id };
+    const researcher = (await findDefinition(owner.id, "researcher"))!;
+    const filler = [];
+    for (let i = 0; i < 5; i++)
+      filler.push(
+        await createAgentRun({
+          parent: await prisma.agentRun.create({
+            data: { conversationId: convo.id, userId: owner.id, trigger: "user" },
+          }),
+          definition: researcher,
+          brief: { objective: "filler " + i },
+        }),
+      );
+    const args = { objective: "One more" };
+    await expect(invokeTool(tool("spawn_agent"), args, ctx)).rejects.toThrow(
+      "already active",
+    );
+    expect(
+      await prisma.actionAttempt.count({ where: { runId: turn.id } }),
+    ).toBe(0);
+    // Once a slot frees up, the identical call works.
+    await cancelAgentTree(filler[0]!.id);
+    const out = (await invokeTool(tool("spawn_agent"), args, {
+      ...ctx,
+      toolCallId: randomUUID(),
+    })) as { status: string };
+    expect(out.status).toBe("queued");
+    await expect(
+      invokeTool(
+        tool("message_agent"),
+        { agent_id: filler[0]!.id, text: "late" },
+        { ...ctx, toolCallId: randomUUID() },
+      ),
+    ).rejects.toThrow("already finished");
+    expect(
+      await prisma.actionAttempt.count({
+        where: { runId: turn.id, toolName: "message_agent" },
+      }),
+    ).toBe(0);
+  } finally {
+    const runs = await prisma.agentRun.findMany({
+      where: { userId: owner.id },
+      select: { id: true },
+    });
+    for (const r of runs) await agentJobs.remove(agentJobId(r.id));
+    await prisma.actionAttempt.deleteMany({
+      where: { runId: { in: runs.map((r) => r.id) } },
+    });
+    for (const r of runs)
+      await prisma.outboxEvent.deleteMany({
+        where: { payload: { path: ["runId"], equals: r.id } },
+      });
+    await prisma.conversation.delete({ where: { id: convo.id } });
+    await prisma.user.delete({ where: { id: owner.id } });
+  }
+});

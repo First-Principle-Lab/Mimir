@@ -105,6 +105,49 @@ export async function treeCost(rootRunId: string): Promise<number> {
   return sum._sum.costUsd ?? 0;
 }
 
+// Depth, fan-out, per-user and task-cost limits for a new child of `parent`.
+// Tools check these in prepare, before the action journal, so a refusal is a
+// plain error rather than an uncertain action; createAgentRun checks again
+// under the per-user lock.
+export async function assertCanStart(
+  parent: Pick<Prisma.AgentRun, "id" | "userId" | "depth" | "rootRunId">,
+  db: Pick<typeof prisma, "agentRun"> = prisma,
+): Promise<void> {
+  const depth = parent.depth + 1;
+  if (depth > AGENT_MAX_DEPTH)
+    throw new ToolError("blocked", "Agents at this depth cannot delegate");
+  const children = await db.agentRun.count({
+    where: { parentRunId: parent.id },
+  });
+  if (children >= AGENT_MAX_CHILDREN)
+    throw new ToolError(
+      "blocked",
+      `This run already started ${AGENT_MAX_CHILDREN} agents; finish with what you have`,
+    );
+  if (depth === 1) {
+    const active = await db.agentRun.count({
+      where: {
+        userId: parent.userId,
+        trigger: "agent",
+        depth: 1,
+        status: { in: ACTIVE },
+      },
+    });
+    if (active >= AGENT_MAX_ACTIVE_PER_USER)
+      throw new ToolError(
+        "blocked",
+        `${active} background agents are already active; wait for one to finish or cancel one`,
+      );
+  } else {
+    const spent = await db.agentRun.aggregate({
+      where: { rootRunId: parent.rootRunId },
+      _sum: { costUsd: true },
+    });
+    if ((spent._sum.costUsd ?? 0) >= AGENT_ROOT_MAX_USD)
+      throw new ToolError("blocked", "This task's cost budget is used up");
+  }
+}
+
 // Creates a child of `parent` after checking depth, fan-out, per-user and
 // task-cost limits under a per-user lock. Depth-1 children are enqueued
 // through the outbox in the same transaction.
@@ -124,36 +167,7 @@ export async function createAgentRun(opts: {
   const rootRunId = depth === 1 ? id : parent.rootRunId!;
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${parent.userId}))::text`;
-    const children = await tx.agentRun.count({
-      where: { parentRunId: parent.id },
-    });
-    if (children >= AGENT_MAX_CHILDREN)
-      throw new ToolError(
-        "blocked",
-        `This run already started ${AGENT_MAX_CHILDREN} agents; finish with what you have`,
-      );
-    if (depth === 1) {
-      const active = await tx.agentRun.count({
-        where: {
-          userId: parent.userId,
-          trigger: "agent",
-          depth: 1,
-          status: { in: ACTIVE },
-        },
-      });
-      if (active >= AGENT_MAX_ACTIVE_PER_USER)
-        throw new ToolError(
-          "blocked",
-          `${active} background agents are already active; wait for one to finish or cancel one`,
-        );
-    } else {
-      const spent = await tx.agentRun.aggregate({
-        where: { rootRunId },
-        _sum: { costUsd: true },
-      });
-      if ((spent._sum.costUsd ?? 0) >= AGENT_ROOT_MAX_USD)
-        throw new ToolError("blocked", "This task's cost budget is used up");
-    }
+    await assertCanStart(parent, tx);
     const run = await tx.agentRun.create({
       data: {
         id,
@@ -272,7 +286,11 @@ function delegateSpec(parent: AgentRun, options: AgentOptions): ToolSpec {
     provenance: "mimir:harness/internal",
     resultTrust: "untrusted",
     outputMaxChars: AGENT_RESULT_MAX_CHARS + 2000,
-    prepare: (raw) => JSON.parse(JSON.stringify(delegateArgs.parse(raw))),
+    prepare: async (raw) => {
+      const args = delegateArgs.parse(raw);
+      await assertCanStart(parent);
+      return JSON.parse(JSON.stringify(args));
+    },
     execute: async (raw, ctx) => {
       const { agent, ...brief } = delegateArgs.parse(raw);
       const definition = await findDefinition(parent.userId, agent);
@@ -373,7 +391,13 @@ export async function executeAgent(
   if (!def) return outcome("failed", "The agent definition no longer exists.");
   const brief = briefSchema.parse(run.brief);
   // A retried job may find a delegation that was mid-flight when it crashed.
+  // In-turn helpers die with the process that ran them, so any still active
+  // when an attempt starts are orphans.
   await interruptStartedActions(run.id);
+  await prisma.agentRun.updateMany({
+    where: { parentRunId: run.id, status: { in: ACTIVE } },
+    data: { status: "interrupted", finishedAt: new Date() },
+  });
   if ((await treeCost(run.rootRunId!)) >= AGENT_ROOT_MAX_USD)
     return outcome("budget_exceeded");
 
@@ -551,8 +575,13 @@ export async function executeAgent(
 
   let runError: unknown;
   try {
-    const early = await unread();
-    await claim(early.map((m) => m.id));
+    // A retried attempt starts from the brief again, so it also needs the
+    // messages an earlier attempt already consumed.
+    const early = await prisma.agentMessage.findMany({
+      where: { runId: run.id },
+      orderBy: { createdAt: "asc" },
+    });
+    await claim(early.filter((m) => !m.consumedAt).map((m) => m.id));
     await session.prompt(
       briefText(brief, def) +
         (early.length ? "\n\n" + fromParent(early.map((m) => m.text)) : ""),

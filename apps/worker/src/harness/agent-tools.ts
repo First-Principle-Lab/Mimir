@@ -7,6 +7,7 @@ import type { Queue } from "bullmq";
 import { z } from "zod";
 import {
   ACTIVE,
+  assertCanStart,
   agentJobOptions,
   agentJobs,
   briefSchema,
@@ -50,6 +51,28 @@ async function ownAgent(agentId: string, ctx: ToolRunContext) {
   return run;
 }
 
+async function activeAgent(agentId: string, ctx: ToolRunContext) {
+  const run = await ownAgent(agentId, ctx);
+  if (!ACTIVE.includes(run.status))
+    throw new ToolError(
+      "validation",
+      `That agent already finished (${run.status}); start a new one with the updated brief`,
+    );
+  return run;
+}
+
+async function spawnTarget(agent: string, ctx: ToolRunContext) {
+  const parent = await prisma.agentRun.findFirst({
+    where: { id: ctx.runId, userId: ctx.userId },
+  });
+  if (!parent || parent.trigger === "agent")
+    throw new ToolError("blocked", "Only the assistant can start agents");
+  const definition = await findDefinition(ctx.userId, agent);
+  if (!definition) throw new ToolError("validation", "Unknown agent: " + agent);
+  await assertCanStart(parent);
+  return { parent, definition };
+}
+
 export function agentTools(opts: { queue?: Queue } = {}): ToolSpec[] {
   const queue = opts.queue ?? agentJobs;
   return [
@@ -60,17 +83,15 @@ export function agentTools(opts: { queue?: Queue } = {}): ToolSpec[] {
       description: `Start a read-only background agent with a brief and return at once; its result arrives later as a background input. Use for long work that shouldn't hold the chat, multi-source research, triage of many items, and whenever the user asks for background work. Otherwise answer short or sequential requests yourself. Give a self-contained objective, success criteria and the context it needs, including the user's instructions about how to do the work (helpers per item, proposals for review): it can't see this conversation. One agent per independent task; put items the user wants handled separately in items (one helper each). At most ${AGENT_MAX_ACTIVE_PER_USER} active. agent defaults to "researcher". Agents never message the user and propose writes instead of making them.`,
       // Input mode: fields with defaults stay optional for the model.
       parameters: spawnArgs.toJSONSchema({ io: "input" }),
-      prepare: (raw) => json(spawnArgs.parse(raw)),
+      // Refusals happen here, before the action journal.
+      prepare: async (raw, ctx) => {
+        const args = spawnArgs.parse(raw);
+        await spawnTarget(args.agent, ctx);
+        return json(args);
+      },
       execute: async (raw, ctx) => {
         const { agent, ...brief } = spawnArgs.parse(raw);
-        const parent = await prisma.agentRun.findFirst({
-          where: { id: ctx.runId, userId: ctx.userId },
-        });
-        if (!parent || parent.trigger === "agent")
-          throw new ToolError("blocked", "Only the assistant can start agents");
-        const definition = await findDefinition(ctx.userId, agent);
-        if (!definition)
-          throw new ToolError("validation", "Unknown agent: " + agent);
+        const { parent, definition } = await spawnTarget(agent, ctx);
         await ctx.assertOwned?.();
         const run = await createAgentRun({ parent, definition, brief });
         // The outbox row guarantees the job; this is the fast path.
@@ -92,15 +113,14 @@ export function agentTools(opts: { queue?: Queue } = {}): ToolSpec[] {
       description:
         "Send a correction or extra instruction to a queued or running background agent. It applies the message at its next step. A finished agent can't be messaged; start a new one with the updated brief.",
       parameters: messageArgs.toJSONSchema({ io: "input" }),
-      prepare: (raw) => json(messageArgs.parse(raw)),
+      prepare: async (raw, ctx) => {
+        const args = messageArgs.parse(raw);
+        await activeAgent(args.agent_id, ctx);
+        return json(args);
+      },
       execute: async (raw, ctx) => {
         const args = messageArgs.parse(raw);
-        const run = await ownAgent(args.agent_id, ctx);
-        if (!ACTIVE.includes(run.status))
-          throw new ToolError(
-            "validation",
-            `That agent already finished (${run.status}); start a new one with the updated brief`,
-          );
+        const run = await activeAgent(args.agent_id, ctx);
         await ctx.assertOwned?.();
         await prisma.agentMessage.create({
           data: { runId: run.id, text: args.text },
