@@ -1,0 +1,14 @@
+{
+  "topic": "phase-4-subagents",
+  "suite": "harness",
+  "status": "passed",
+  "exitCode": 0,
+  "testedCommit": "9b26a46b84b21b611d29824c55d6285fac6a0261",
+  "testedRef": "feat/phase-4-subagents",
+  "branch": "eval/2026-11-23-harness-phase-4-subagents",
+  "runId": "20261123T045441Z-harness",
+  "startedAt": "2026-11-23T04:54:42Z",
+  "finishedAt": "2026-11-23T05:04:34Z",
+  "runner": "local",
+  "runUrl": null
+}
