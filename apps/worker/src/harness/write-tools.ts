@@ -68,8 +68,13 @@ const eventCreate = z
     (a) => Date.parse(a.end) > Date.parse(a.start),
     "End must be after start",
   );
+// Omitted attendees stay unchanged: PATCH with [] would silently remove them.
 const eventUpdate = z
-  .strictObject({ ...eventFields, eventId: z.string().min(1).max(1024) })
+  .strictObject({
+    ...eventFields,
+    attendees: z.array(z.email()).max(50).optional(),
+    eventId: z.string().min(1).max(1024),
+  })
   .refine(
     (a) => Date.parse(a.end) > Date.parse(a.start),
     "End must be after start",
@@ -269,13 +274,15 @@ export async function writeToolsFor(
           (id ? "/" + encodeURIComponent(id) : ""),
         {
           method: id ? "PATCH" : "POST",
-          query: { sendUpdates: a.attendees.length ? "all" : "none" },
+          // Existing attendees hear about approved updates; Google sends
+          // nothing for an event without attendees.
+          query: { sendUpdates: id || a.attendees?.length ? "all" : "none" },
           body: {
             summary: a.summary,
             description: a.description,
             start: { dateTime: a.start },
             end: { dateTime: a.end },
-            attendees: a.attendees.map((email) => ({ email })),
+            attendees: a.attendees?.map((email) => ({ email })),
           },
         },
       );
@@ -300,7 +307,7 @@ export async function writeToolsFor(
       spec(
         "calendar_update_event",
         "Update calendar event",
-        "Update the specified event using the exact reviewed details. All updates require approval because an existing event may have other attendees.",
+        "Update the specified event using the exact reviewed details. Omit attendees to keep the current guest list; a provided list replaces it. All updates require approval because an existing event may have other attendees.",
         eventUpdate,
         save,
       ),

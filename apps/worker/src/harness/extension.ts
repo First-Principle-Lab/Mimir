@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   createToolSearchExtension,
   type ExtensionAPI,
@@ -82,7 +83,14 @@ export function mimirExtension(
               else signal?.addEventListener("abort", onAbort, { once: true });
             });
             const value = await Promise.race([
-              invokeTool(spec, params, { ...opts.ctx, toolCallId, signal }),
+              // Providers may omit or reuse call IDs (pi passes them through),
+              // so journal rows get a Mimir-unique one. Exactly-once comes from
+              // the action's idempotency key, not from this ID.
+              invokeTool(spec, params, {
+                ...opts.ctx,
+                toolCallId: toolCallId + "#" + randomUUID(),
+                signal,
+              }),
               aborted,
             ]);
             return {

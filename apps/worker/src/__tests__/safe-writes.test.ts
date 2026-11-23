@@ -15,6 +15,8 @@ const { invokeTool, executeJournaled, interruptStartedActions, decideAction } =
 const { resumeApproval } = await import("../harness/approvals.js");
 const { writeToolsFor } = await import("../harness/write-tools.js");
 const { mcpActionRisk } = await import("../harness/mcp-tools.js");
+const { mimirExtension } = await import("../harness/extension.js");
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ToolRunContext, ToolSpec } from "../harness/tools.js";
 const prisma = getPrismaClient();
 const userId = randomUUID();
@@ -386,6 +388,78 @@ test("all write families use validated provider paths and require review where a
   expect(requests).toHaveLength(0);
   await resumeApproval(await answer(pending.approvalId, ctx), tools, ctx);
   expect(requests).toEqual(["/repos/fixture/repo/issues"]);
+});
+test("calendar updates keep the guest list unless attendees are listed", async () => {
+  const ctx = await context();
+  const requests: { query?: unknown; body?: unknown }[] = [];
+  const tools = await writeToolsFor(userId, () => async (_path, options) => {
+    requests.push({ query: options?.query, body: options?.body });
+    return { status: 200, data: { id: "fixture" } };
+  });
+  const update = tools.find((s) => s.name === "calendar_update_event")!;
+  const args = await update.prepare!(
+    {
+      eventId: "evt-1",
+      summary: "Moved",
+      start: "2026-11-30T11:00:00+05:30",
+      end: "2026-11-30T11:30:00+05:30",
+    },
+    ctx,
+  );
+  expect(args).not.toHaveProperty("attendees");
+  const pending = (await invokeTool(update, args, ctx)) as {
+    approvalId: string;
+  };
+  await resumeApproval(await answer(pending.approvalId, ctx), tools, ctx);
+  expect(requests).toHaveLength(1);
+  expect(requests[0]!.query).toEqual({ sendUpdates: "all" });
+  expect(JSON.parse(JSON.stringify(requests[0]!.body))).not.toHaveProperty(
+    "attendees",
+  );
+});
+test("reused or missing provider call IDs cannot block distinct actions", async () => {
+  const ctx = await context();
+  const calls: unknown[] = [];
+  const tools = new Map<
+    string,
+    { execute: (id: string, params: unknown) => Promise<{ isError?: boolean }> }
+  >();
+  mimirExtension({
+    specs: [
+      synthetic({
+        risk: "write_reversible_self",
+        sideEffect: "reversible",
+        provenance: "mimir:harness/internal",
+        execute: async (args) => {
+          calls.push(args);
+          return { ok: true };
+        },
+      }),
+    ],
+    ctx: { ...ctx, toolCallId: undefined },
+    runtimeContext: () => "",
+  })({
+    registerTool: (t: never) => tools.set((t as { name: string }).name, t),
+    on: () => {},
+  } as unknown as ExtensionAPI);
+  const tool = tools.get("safe_write_fixture")!;
+  // Kimi-style per-message indices repeat; some providers send no ID at all.
+  for (const [id, n] of [
+    ["functions.safe_write_fixture:0", 1],
+    ["functions.safe_write_fixture:0", 2],
+    ["", 3],
+    ["", 4],
+  ] as const)
+    expect((await tool.execute(id, { n })).isError).toBeFalsy();
+  expect(calls).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }]);
+  expect(
+    await prisma.actionAttempt.count({
+      where: { runId: ctx.runId, status: "succeeded" },
+    }),
+  ).toBe(4);
+  // The same action is still journaled once.
+  await tool.execute("", { n: 1 });
+  expect(calls).toHaveLength(4);
 });
 test("SIGKILL after provider acceptance cannot repeat the side effect on recovery", async () => {
   const ctx = await context();
