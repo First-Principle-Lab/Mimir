@@ -386,6 +386,12 @@ try {
         );
         const [agent] = await agents();
         requireThat(agent, "No background agent was started");
+        requireThat(
+          !(await toolsCalled()).some((tool) =>
+            ["search_email", "email_draft", "email_send"].includes(tool ?? ""),
+          ),
+          "Background proposal work ran in the initial chat turn",
+        );
         agentWorker.resume();
         if (!agentWorker.isRunning()) void agentWorker.run();
         const done = await settle(agent.id);
