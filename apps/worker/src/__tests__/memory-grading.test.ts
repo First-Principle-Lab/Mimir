@@ -1,30 +1,32 @@
 import { expect, test } from "bun:test";
 import { parseMemoryGrades } from "../../../../evals/memory/grading.js";
-test("memory grading counts records and annotations separately", () => {
-  expect(
-    parseMemoryGrades(
-      JSON.stringify({
-        supported: [true, true, false],
-        covered: [true, false],
-        invented: [false, false, true],
-        stale: [false, false, false],
-      }),
-      3,
-      2,
-    ),
-  ).toEqual({ supported: 2, covered: 1, invented: 1, stale: 0, notes: "" });
+test("memory grading requires exact record/annotation labels and real evidence", () => {
+  const data = {
+    records: {
+      record_0: { supported: true, invented: false, stale: false },
+      record_1: { supported: false, invented: true, stale: false },
+    },
+    annotations: {
+      annotation_0: { covered: true, evidence: "fact A" },
+      annotation_1: { covered: false, evidence: "" },
+      annotation_2: { covered: false, evidence: "" },
+    },
+  };
+  const grade = () =>
+    parseMemoryGrades(JSON.stringify(data), ["fact A", "fact B"], 3);
+  expect(grade()).toEqual({
+    supported: 1,
+    covered: 1,
+    invented: 1,
+    stale: 0,
+    notes: "",
+  });
+  data.annotations.annotation_0.evidence = "invented quotation";
+  expect(grade).toThrow("coverage evidence");
   expect(() =>
-    parseMemoryGrades(
-      '{"supported":3,"covered":3,"invented":0,"stale":0}',
-      3,
-      2,
-    ),
-  ).toThrow("expected 3 booleans");
-  expect(() =>
-    parseMemoryGrades(
-      '{"supported":[true,true,true],"covered":[true,true,true]}',
-      3,
-      2,
-    ),
-  ).toThrow("expected 2 booleans");
+    parseMemoryGrades(JSON.stringify(data), ["fact A", "fact B"], 2),
+  ).toThrow("labels annotation");
+  expect(() => parseMemoryGrades('{"supported":3}', ["fact A"], 1)).toThrow(
+    "labels record",
+  );
 });

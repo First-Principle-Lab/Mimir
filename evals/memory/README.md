@@ -1,12 +1,17 @@
-# Memory readiness protocol (v3)
+# Memory readiness protocol (v4)
 
-Version 3 freezes the final Phase 5 readiness run. Version 1 exposed a
+Version 4 freezes the final Phase 5 readiness run. Version 1 exposed a
 compaction response-tracking failure; its immutable failed run is retained.
 Version 2 strengthened live correction/forget, cross-session search and stored-output
 checks and dispatches transcript batches through the background extraction entry
 point. Its run stopped on an invalid judge count (more covered annotations than
 existed). Version 3 requires one boolean per record and annotation, validates array
-lengths, and calculates counts in code. Invalid judgments still fail the gate.
+lengths, and calculates counts in code. An invalid-length response stopped its run too. Version 4 uses a forced grading
+function with explicit named record/annotation keys and retains the individual labels and
+verbatim extracted-record evidence for coverage. Evidence must match a record;
+the judge may still make semantic mistakes and needs human auditing. Malformed/ungrounded submissions are retained and may be repaired up to twice
+with validator feedback. Scores use the first valid submission; valid scores are
+never retried to seek a better outcome. Three invalid submissions fail the gate.
 The six fixtures and annotations are unchanged; no held-out tuning occurred. This is the transition reference and adapter
 readiness gate. It does not select or rank external providers. Phase 7 runs all
 five candidates after the staging prerequisites in plan.md.
