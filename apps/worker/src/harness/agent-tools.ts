@@ -7,7 +7,7 @@ import type { Queue } from "bullmq";
 import { z } from "zod";
 import {
   ACTIVE,
-  agentJobId,
+  agentJobOptions,
   agentJobs,
   briefSchema,
   cancelAgentTree,
@@ -75,7 +75,7 @@ export function agentTools(opts: { queue?: Queue } = {}): ToolSpec[] {
         const run = await createAgentRun({ parent, definition, brief });
         // The outbox row guarantees the job; this is the fast path.
         await queue
-          .add("agent", { runId: run.id }, { jobId: agentJobId(run.id) })
+          .add("agent", { runId: run.id }, agentJobOptions(run.id))
           .catch(() => {});
         return {
           agentId: run.id,
@@ -135,8 +135,8 @@ export function agentTools(opts: { queue?: Queue } = {}): ToolSpec[] {
       sideEffect: "none",
       idempotent: true,
       provenance: "mimir:harness/internal",
-      // Objectives are the assistant's own briefs; results are not included.
-      resultTrust: "trusted",
+      // Briefs are model-written and may quote tool content.
+      resultTrust: "untrusted",
       outputMaxChars: 6000,
       execute: async (_raw, ctx) => {
         const runs = await prisma.agentRun.findMany({

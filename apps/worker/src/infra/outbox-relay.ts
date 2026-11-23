@@ -8,7 +8,7 @@ import {
   turnRetryPolicy,
 } from "./queues.js";
 import { pollLoop } from "./poll-loop.js";
-import { agentJobId, agentJobs } from "../harness/agents.js";
+import { agentJobOptions, agentJobs } from "../harness/agents.js";
 
 const prisma = getPrismaClient();
 
@@ -91,7 +91,7 @@ function jobFor(
         q.agents!.add(
           "agent",
           { runId: p.runId },
-          { ...retryPolicy, jobId: agentJobId(p.runId as string) },
+          agentJobOptions(p.runId as string),
         );
     default:
       return null;

@@ -56,11 +56,12 @@ export function interactionModelId(): string {
   return interactionConfig().model;
 }
 
-// Background agents use "subagent" from model-config.json when it is set, so
-// leaf workers can run on a cheaper model than the interaction agent.
-export function agentConfig(): ReturnType<typeof llmConfigFor> {
+// A background agent's definition names its model-config.json role
+// ("subagent" by default), so leaf workers can run on a cheaper model than
+// the interaction agent. Unknown roles fall back to the interaction model.
+export function agentConfig(role = "subagent"): ReturnType<typeof llmConfigFor> {
   try {
-    return llmConfigFor("subagent");
+    return llmConfigFor(role);
   } catch {
     return interactionConfig();
   }

@@ -35,6 +35,14 @@ export const agentJobs = new Queue("harness-agents", {
   connection: { url: getConfig().REDIS_URL, maxRetriesPerRequest: null },
 });
 export const agentJobId = (runId: string) => "agent-" + runId;
+// Shared by spawn_agent's fast path and the outbox relay, which use one jobId.
+export const agentJobOptions = (runId: string) => ({
+  jobId: agentJobId(runId),
+  attempts: 2,
+  backoff: { type: "exponential" as const, delay: 5000 },
+  removeOnComplete: 1000,
+  removeOnFail: 1000,
+});
 const AGENT_DEFER_MS = 2_000;
 
 export type AgentStatus =
@@ -49,8 +57,8 @@ export interface ProposedAction {
   tool: string;
   arguments: unknown;
   reason: string;
-  // Recipients and sites the trusted brief never named, so they came from
-  // tool content. Set by the runtime; the parent and the card see them.
+  // Recipients and sites the user never named in this conversation, so they
+  // came from tool content or the model. Set by the runtime.
   unverifiedTargets?: string[];
 }
 export interface AgentOutcome {
@@ -186,8 +194,8 @@ export async function cancelAgentTree(runId: string): Promise<number> {
   return count;
 }
 
-// Email addresses and URL hosts in a proposal that the trusted text (brief and
-// the assistant's messages) doesn't mention.
+// Email addresses and URL hosts in a proposal that the trusted text (the
+// user's own messages) doesn't mention.
 export function unverifiedTargets(args: unknown, trusted: string): string[] {
   const text = JSON.stringify(args).toLowerCase();
   const known = trusted.toLowerCase();
@@ -240,7 +248,7 @@ function proposeActionSpec(
         ...(unverified.length && {
           unverifiedTargets: unverified,
           warning:
-            "These targets were not named in your brief; they came from tool content.",
+            "The user never named these targets; they came from tool content.",
         }),
         note: "Proposal recorded for review. Do not describe it as done.",
       };
@@ -296,17 +304,18 @@ async function agentSpecs(
       (allowed.includes("*") || allowed.includes(s.name)) &&
       (def.memoryScope !== "none" || s.name !== "memory_search"),
   );
+  // Briefs and parent messages are model-written and may quote tool
+  // content, so only the user's own messages vouch for a target.
   specs.push(
     proposeActionSpec(proposals, async () =>
-      [
-        JSON.stringify(run.brief),
-        ...(
-          await prisma.agentMessage.findMany({
-            where: { runId: run.id },
-            select: { text: true },
-          })
-        ).map((m) => m.text),
-      ].join("\n"),
+      (
+        await prisma.message.findMany({
+          where: { conversationId: run.conversationId, role: "user" },
+          select: { content: true },
+        })
+      )
+        .map((m) => m.content)
+        .join("\n"),
     ),
   );
   if (run.depth < AGENT_MAX_DEPTH && def.canSpawn)
@@ -380,7 +389,7 @@ export async function executeAgent(
     costUsd: run.costUsd,
   };
   const limitUsd = run.budgetUsd ?? def.maxUsd;
-  const config = agentConfig();
+  const config = agentConfig(def.modelRole);
   let session: Awaited<ReturnType<typeof openSession>>;
   let stopped: AgentStatus | undefined;
   let chain: Promise<unknown> = Promise.resolve();

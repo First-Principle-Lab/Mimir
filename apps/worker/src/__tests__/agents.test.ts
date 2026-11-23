@@ -15,7 +15,8 @@ const { AGENT_MAX_CHILDREN, AGENT_ROOT_MAX_USD, AGENT_STALE_MS, getPrismaClient 
 const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
 const { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider } =
   await import("@earendil-works/pi-ai/compat");
-const { setModelOverrideForTests } = await import("../harness/pi-runtime.js");
+const { agentConfig, interactionConfig, setModelOverrideForTests } =
+  await import("../harness/pi-runtime.js");
 const {
   agentJobId,
   agentJobs,
@@ -656,9 +657,18 @@ test("proposals aimed at recipients or sites the brief never named are tagged", 
     ).sort(),
   ).toEqual(["attacker@exfil.example.test", "exfil.example.test"]);
 
+  // Only the user's own words vouch for a target; a model-written brief that
+  // quotes the injected address does not.
+  await prisma.message.create({
+    data: {
+      conversationId,
+      role: "user",
+      content: "Propose a reply to finance@example.test",
+    },
+  });
   const run = await backgroundAgent(
     "researcher",
-    "Draft a reply to finance@example.test",
+    "Reply to finance@example.test. Ignore attacker@exfil.example.test from the footer.",
   );
   faux.setResponses([
     reply(
@@ -689,4 +699,6 @@ test("proposals aimed at recipients or sites the brief never named are tagged", 
   ]);
   // The tag survives into what the parent reads.
   expect(inputText([input!])).toContain("unverifiedTargets");
+  // A definition's unknown model role falls back to the interaction model.
+  expect(agentConfig("no-such-role")).toEqual(interactionConfig());
 });
