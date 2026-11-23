@@ -71,9 +71,33 @@ status are recorded in [PR #5](https://github.com/First-Principle-Lab/Mimir/pull
     CSS variables and weights. The default Turbopack static build passes without
     the old cache. No agent behavior changed after the passing evaluation.
 
+An independent pre-merge review (2026-11-23) re-read the full phase diff and
+found two more defects, both fixed in `b135214` with regressions that fail on
+the previous code:
+
+13. `calendar_update_event` defaulted `attendees` to `[]` and PATCHed it, so an
+    approved time change silently removed every guest (with `sendUpdates:
+    none`, nobody was told). Omitted attendees are now left unchanged, a listed
+    set replaces them, and approved updates notify existing guests.
+14. The journal's `(runId, toolCallId)` uniqueness relied on provider call IDs.
+    pi 1.6.0 passes them through unchanged: empty when a provider omits one, and
+    per-message indices such as `functions.x:0` for some providers. A second,
+    different action in the same run was then refused as an ID reuse. Journal
+    rows now get a Mimir-unique call ID; exactly-once still comes from the
+    action's idempotency key, which is unchanged.
+
+The review also re-checked, without finding defects: approval ownership and
+hash races, decline/expiry/cancel paths, same-run resumption, recovery of
+`executing` approvals, taint restoration on hydration, Composio inner-action
+risk, the accumulated-text stream sanitizer and the approval card's escaped
+rendering. Design choices noted but not changed: every new chat message cancels
+all pending cards in the conversation, including cards raised by ambient work;
+provider 4xx responses are recorded as interrupted (uncertain) rather than
+failed.
+
 ## Verification and limits
 
-- Frozen install, lint, workspace typecheck, all **253 tests** (forced uncached),
+- Frozen install, lint, workspace typecheck, all **255 tests** (forced uncached),
   duplication check and static web export pass locally. All three evaluation
   scripts pass a focused TypeScript check. Both schema migrations are forward-only.
 - A fresh temporary database was upgraded through Phase 2, seeded with synthetic
@@ -97,8 +121,8 @@ status are recorded in [PR #5](https://github.com/First-Principle-Lab/Mimir/pull
 ## Published evidence
 
 The passing run is
-[`eval/2026-11-22-harness-phase-3-safe-writes-completion-review-5`](https://github.com/First-Principle-Lab/Mimir/tree/eval/2026-11-22-harness-phase-3-safe-writes-completion-review-5).
-It tests commit `51d8ff0e439e037c0d2e2bc8e45900d5c941cd84` with actual OpenRouter
+[`eval/2026-11-23-harness-phase-3-review-fixes-3`](https://github.com/First-Principle-Lab/Mimir/tree/eval/2026-11-23-harness-phase-3-review-fixes-3).
+It tests commit `b1352144202d2450a115b800e6c9a945c16760a3` with actual OpenRouter
 inference using `~deepseek/deepseek-v4-flash-latest`:
 
 - **33/33 scenarios pass:** 12 Phase 1, 11 Phase 2 and 10 Phase 3 cases.
@@ -106,9 +130,8 @@ inference using `~deepseek/deepseek-v4-flash-latest`:
 - HTTP intake, BullMQ, pi, journals, exact-argument approvals, same-run resumption
   and authenticated socket delivery run through the implemented path. Account
   reads and provider/browser responses are synthetic; no real account is changed.
-- The subsequent changes package local web fonts and record this evidence. The
-  API, worker, tools, prompts, migrations and evaluation code match the tested
-  commit. PR #5 tracks the required CI gate for the final head.
+- Later commits only record this evidence. The API, worker, tools, prompts,
+  migrations and evaluation code match the tested commit.
 
 Earlier immutable runs retain the findings and their fixes. The initial run on
 `e8ac502` is preserved as
@@ -117,6 +140,12 @@ the digest-clock evaluation finding above). The `-2` run on `b16d48a` records th
 two read-only scoring findings (10/12 Phase 1 scenarios; later groups did not
 run). The `-3` run on `8182a80` passes 32/32 scenarios and all 12 red-team checks;
 the `-4` run on `9356fca` records the additional refusal-scoring finding (11/12
-Phase 1 scenarios; later groups did not run). The final `-5` run includes every
-fix and the additional provider-error scenario. Earlier exploratory checks do
-not replace this passing published gate.
+Phase 1 scenarios; later groups did not run). The `-5` run on `51d8ff0` passed
+33/33 before findings 13–14. On `b135214`,
+`eval/2026-11-23-harness-phase-3-review-fixes` recorded 32/33: in
+`declined-invitation` the model returned two empty responses after tool
+discovery and never reached the calendar tool. That scenario then passed 4/4
+isolated reruns. Its `-2` run is void: another process switched the shared
+checkout mid-run, so the safe-write script was missing. The `-3` run, from an
+isolated worktree, is the passing gate. Earlier exploratory checks do not
+replace it.

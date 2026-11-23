@@ -15,11 +15,10 @@ Phase 1's published real-inference run and required CI passed; PR #3 is merged i
 23/23 real-inference scenarios and required CI passed on `002e5d7`; PR #4 was
 squash-merged into `dev` as `ab80704`. Phase 3 is implemented and reviewed in
 [PR #5](https://github.com/First-Principle-Lab/Mimir/pull/5): journaled write tools,
-exact-argument approval cards, 253 passing tests, 33/33 real-inference scenarios
-and 12 red-team checks. The [completion review](docs/phase-3-review.md) records
-the requirement audit, resolved findings and immutable evidence; required CI is
-tracked on the PR before completion and integration into `dev`. Phases 4–6 have
-not started.
+exact-argument approval cards, 255 passing tests, 33/33 real-inference scenarios
+and 12 red-team checks on `b135214`. The [completion review](docs/phase-3-review.md)
+records the requirement audit, 14 resolved findings and immutable evidence. Phase 4
+starts after PR #5 is in `dev`; Phases 5–6 have not started.
 Existing chats retain their latest 50 text messages on first pi use and durable
 facts are preserved. Phase 2 adds inbox/notification scenarios, durable reminders
 and read-only watchers to the Phase 0/1 harness runner.
