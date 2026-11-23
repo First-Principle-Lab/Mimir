@@ -34,10 +34,12 @@ zero wrongly silent requested replies. Scripted tests cover empty-answer recover
 and the single delivery nudge without relying on the model to misbehave.
 
 Phase 3 adds scripts/eval-safe-writes.ts and apps/worker/src/redteam.ts to the
-same harness command. Ten live-model scenarios cover approved email, declined
+same harness command. Twelve live-model scenarios cover approved email, declined
 calendar invitations, corrected GitHub cards, Notion, browser forms, tainted
 read-to-send, injected mail, unattended drafts, Composio meta-tools and an
-accepted-then-failed browser action with an injected provider error. They use
+accepted-then-failed browser action with an injected provider error, a card that
+stays open while an unrelated question is answered, and an approved action the
+provider rejects (journaled failed, reported as unchanged, never retried). They use
 the production schemas, policy, journals, HTTP card decisions, resumed pi run,
 BullMQ and socket delivery; only provider account responses/browser submissions
 are synthetic. Provider fixtures reject any side effect without a prior journal
