@@ -1,0 +1,14 @@
+{
+  "topic": "tool-schema-defaults",
+  "suite": "harness",
+  "status": "passed",
+  "exitCode": 0,
+  "testedCommit": "c880fbfd515ed99f515db1088ea2143c4e3de6b1",
+  "testedRef": "fix/tool-schema-defaults",
+  "branch": "eval/2026-11-23-harness-tool-schema-defaults",
+  "runId": "20261123T050631Z-harness",
+  "startedAt": "2026-11-23T05:06:31Z",
+  "finishedAt": "2026-11-23T05:13:09Z",
+  "runner": "local",
+  "runUrl": null
+}
