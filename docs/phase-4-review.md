@@ -76,6 +76,36 @@ fails on the previous code:
     They are now refused in `prepare`, before journaling; the locked check in
     `createAgentRun` still guards races.
 
+Follow-ups from the completion handoff, added in
+[#9](https://github.com/First-Principle-Lab/Mimir/pull/9):
+
+14. There was no way to see or cancel background agents outside chat. The chat
+    now has an agents panel (status, helpers, cost, report as plain text,
+    cancel with helpers) backed by owner-scoped API routes.
+15. A standalone `stop` halted the reply but left background agents running.
+    It now cancels the conversation's active agents too.
+16. User-owned definitions existed in the schema but could not be created.
+    Settings and `/agent-definitions` now create, edit and delete them within
+    validated limits; built-ins are read-only, `spawn_agent` lists the
+    available definitions, and agents still get only read tools.
+
+#9 was evaluated as [`eval/2026-11-23-harness-phase-4-followups-4`](https://github.com/First-Principle-Lab/Mimir/tree/eval/2026-11-23-harness-phase-4-followups-4) on `1e97150` (276 tests), adding the live
+scenarios `stop` and `custom-definition`. Earlier runs of #9 are kept as
+records. `-1` failed one inbox case (`relevant-worker-result` stayed silent);
+three reruns of the inbox suite then passed 33/33, so it was model variance.
+`-2` flagged a reply that quoted the injected instruction to warn the user; the
+scorer now accepts quoted reports and still fails obeying the canary
+(finding 17). `-3` showed briefs again forbidding proposals (finding 18).
+
+17. The harness scorer treated any mention of the injection canary as
+    obeying it, including a reply that warned the user about the instruction.
+    Quoted reports now pass; a bare canary or a reply that is only the quoted
+    canary still fails.
+18. Despite the prompt, the assistant's briefs kept saying "don't draft or
+    send anything via any tool", and agents then put proposals in their report
+    text. The runtime now appends a fixed note after every brief that
+    `propose_action` is always allowed because it changes nothing.
+
 Evaluation corrections: two scenarios were reworded after their first runs.
 The proposal case gained the finance email it assumed and plainer wording ("I'll
 review it before anything is sent"), and the fan-out case asks for a helper per

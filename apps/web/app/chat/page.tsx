@@ -16,6 +16,11 @@ import { Spotlight } from "@/components/chat/spotlight";
 import { MovingBorderButton } from "@/components/chat/moving-border-button";
 import { Reveal, SignalDot } from "@/components/chat/motion";
 import { ApprovalCard, type Approval } from "@/components/chat/approval-card";
+import {
+  ACTIVE_AGENT_STATUSES,
+  AgentsPanel,
+  type BackgroundAgent,
+} from "@/components/chat/agents-panel";
 import { ThreadBubbles } from "@/components/chat/thread-bubbles";
 import { ConnectorsPanel } from "@/components/chat/connectors-panel";
 import {
@@ -100,6 +105,7 @@ function toThreadMessage(message: ApiMessage): ThreadMessage {
 export default function ChatPage() {
   const [view, setView] = useState<View>("loading");
   const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [agents, setAgents] = useState<BackgroundAgent[]>([]);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [conversationId, setConversationId] = useState("");
   const [draft, setDraft] = useState("");
@@ -162,6 +168,14 @@ export default function ChatPage() {
     if (cards.ok && sequence === refreshSequenceRef.current)
       setApprovals(
         ((await cards.json()) as { approvals: Approval[] }).approvals,
+      );
+    const running = await fetch(
+      API + "/agents?conversationId=" + encodeURIComponent(data.conversation.id),
+      { credentials: "include" },
+    );
+    if (running.ok && sequence === refreshSequenceRef.current)
+      setAgents(
+        ((await running.json()) as { agents: BackgroundAgent[] }).agents,
       );
     if (sequence !== refreshSequenceRef.current) return true;
     for (const message of data.conversation.messages) {
@@ -297,7 +311,8 @@ export default function ChatPage() {
       !thinking &&
       !approvals.some((a) =>
         ["approved", "executing", "pending"].includes(a.status),
-      )
+      ) &&
+      !agents.some((a) => ACTIVE_AGENT_STATUSES.includes(a.status))
     )
       return;
     // Heal a lost pub/sub notification without requiring a page reload.
@@ -305,7 +320,7 @@ export default function ChatPage() {
       void refreshThread().catch(() => {});
     }, 3000);
     return () => clearInterval(timer);
-  }, [thinking, approvals, refreshThread]);
+  }, [thinking, approvals, agents, refreshThread]);
 
   const autosize = useCallback(() => {
     const node = textareaRef.current;
@@ -533,6 +548,18 @@ export default function ChatPage() {
               onConnect={() => void connectByKey("google-mail")}
             />
 
+            <AgentsPanel
+              agents={agents}
+              onCancel={async (agent) => {
+                const res = await fetch(
+                  API + "/agents/" + encodeURIComponent(agent.id) + "/cancel",
+                  { method: "POST", credentials: "include" },
+                );
+                if (!res.ok && res.status !== 409)
+                  throw new Error("Could not cancel the agent");
+                await refreshThread();
+              }}
+            />
             {approvals.map((approval) => (
               <ApprovalCard
                 key={approval.id}

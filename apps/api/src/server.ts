@@ -12,6 +12,7 @@ import { mcpRouter } from "./routes/mcp.js";
 import { pushRouter } from "./routes/push.js";
 import { userRouter } from "./routes/user.js";
 import { approvalsRouter } from "./routes/approvals.js";
+import { agentsRouter } from "./routes/agents.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { redis } from "./infra/redis.js";
 import { initPubSub, initSocket } from "./infra/socket.js";
@@ -80,6 +81,7 @@ app.use("/api/v1", mcpRouter);
 app.use("/api/v1", pushRouter);
 app.use("/api/v1", userRouter);
 app.use("/api/v1", approvalsRouter);
+app.use("/api/v1", agentsRouter);
 app.use("/webhooks", webhooksRouter());
 
 app.get("/health", async (_req, res) => {

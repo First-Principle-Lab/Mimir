@@ -53,14 +53,15 @@ Scripted coverage includes an actual SIGKILL after a synthetic provider accepts
 an action, before its success is journaled. Recovery must mark it interrupted
 and never repeat it. A separately committed success is reported from the journal.
 
-Phase 4 adds scripts/eval-agents.ts to the same command. Five live-model
+Phase 4 adds scripts/eval-agents.ts to the same command. Seven live-model
 scenarios use HTTP intake, the production turn processor, a private agent
 queue running the production agent processor, Postgres journals, the inbox and
 socket delivery; only mail is synthetic and deliberately slow for agents. They
 cover background research while a second chat question is answered before the
 agent finishes, cancel, a mid-task correction through message_agent, a write
-proposed rather than made (with an injected footer), and per-item in-turn
-delegation. Every task's cost must stay under AGENT_ROOT_MAX_USD. The Phase 1
+proposed rather than made (with an injected footer), per-item in-turn
+delegation, a standalone stop cancelling a queued agent, and a user-defined
+agent definition chosen by name. Every task's cost must stay under AGENT_ROOT_MAX_USD. The Phase 1
 scenarios also forbid spawn_agent, so short requests are never delegated.
 A single-case exploratory run may set EVAL_AGENT_SCENARIO; published gates run
 the full suite without it.

@@ -6,7 +6,9 @@ import {
   AGENT_MAX_RUNNING_PER_USER,
   AGENT_RESULT_MAX_CHARS,
   AGENT_ROOT_MAX_USD,
+  AGENT_ACTIVE_STATUSES,
   AGENT_STALE_MS,
+  cancelAgentRuns,
   getConfig,
   getLogger,
   getPrismaClient,
@@ -52,7 +54,7 @@ export type AgentStatus =
   | "timeout"
   | "budget_exceeded"
   | "canceled";
-export const ACTIVE = ["queued", "running"];
+export const ACTIVE = AGENT_ACTIVE_STATUSES;
 export interface ProposedAction {
   tool: string;
   arguments: unknown;
@@ -195,14 +197,7 @@ export async function createAgentRun(opts: {
 // Cancel a run and everything under it. Depth is at most 2, so descendants
 // either have it as parent or as root.
 export async function cancelAgentTree(runId: string): Promise<number> {
-  const { count } = await prisma.agentRun.updateMany({
-    where: {
-      trigger: "agent",
-      status: { in: ACTIVE },
-      OR: [{ id: runId }, { parentRunId: runId }, { rootRunId: runId }],
-    },
-    data: { status: "canceled", finishedAt: new Date() },
-  });
+  const count = await cancelAgentRuns(prisma, [runId]);
   // A queued job is removed; an active one sees the status and aborts.
   await agentJobs.remove(agentJobId(runId)).catch(() => 0);
   return count;
@@ -367,6 +362,9 @@ function briefText(brief: Brief, def: Prisma.AgentDefinition): string {
         brief.items.map((item) => "- " + item).join("\n")
       : "",
     "</brief>",
+    // Written by the runtime, not the assistant: a brief that says "don't
+    // draft or send anything" must not rule out the one safe way to suggest it.
+    "Runtime note: propose_action is always allowed. It sends, drafts and changes nothing, so record any change the work calls for with it, whatever the brief says about drafting or sending.",
     `Budget: ${def.maxSteps} model steps, $${def.maxUsd} and ${def.timeoutSec} seconds.`,
   ]
     .filter(Boolean)
