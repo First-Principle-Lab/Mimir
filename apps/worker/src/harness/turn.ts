@@ -21,7 +21,7 @@ import {
   type FactHit,
   type InputJsonValue,
 } from "@mimir/backend-core";
-import { DelayedError, type Job } from "bullmq";
+import { DelayedError, type Job, type Queue } from "bullmq";
 import { publishUserEvent, redis } from "../infra/redis.js";
 import { buildRuntimeContext } from "./context.js";
 import { ModelNotAvailableError } from "./pi-runtime.js";
@@ -46,6 +46,8 @@ import { responseTools } from "./response-tools.js";
 export interface TurnOptions {
   readTools?: typeof readToolsFor;
   now?: () => Date;
+  // Where spawn_agent enqueues background agents (default: the agent queue).
+  agentQueue?: Queue;
 }
 
 const prisma = getPrismaClient();
@@ -345,7 +347,7 @@ async function runConversation(
       assertOwned,
       sanitize,
     }),
-    ...agentTools(),
+    ...agentTools({ queue: options.agentQueue }),
   );
   const agents = await activeAgents(conversationId);
   if (inputs.some((i) => i.kind === "approval_answer")) {

@@ -25,6 +25,7 @@ export const inboxPayload = z.discriminatedUnion("kind", [
           tool: z.string(),
           arguments: z.record(z.string(), z.json()),
           reason: z.string(),
+          unverifiedTargets: z.array(z.string()).optional(),
         }),
       )
       .optional(),

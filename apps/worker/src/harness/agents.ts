@@ -49,6 +49,9 @@ export interface ProposedAction {
   tool: string;
   arguments: unknown;
   reason: string;
+  // Recipients and sites the trusted brief never named, so they came from
+  // tool content. Set by the runtime; the parent and the card see them.
+  unverifiedTargets?: string[];
 }
 export interface AgentOutcome {
   status: AgentStatus;
@@ -58,11 +61,23 @@ export interface AgentOutcome {
 type AgentRun = Prisma.AgentRun & {
   definition: Prisma.AgentDefinition | null;
 };
+// Eval runs give agents synthetic account data, as TurnOptions does for turns.
+export interface AgentOptions {
+  readTools?: typeof readToolsFor;
+}
 
 export const briefSchema = z.strictObject({
   objective: z.string().trim().min(1).max(4000),
   success_criteria: z.string().trim().max(2000).optional(),
   context: z.string().trim().max(8000).optional(),
+  // Independent items the agent hands to one helper each.
+  items: z
+    .array(z.string().trim().min(1).max(500))
+    .max(AGENT_MAX_CHILDREN)
+    .optional()
+    .describe(
+      "Independent things of the same kind to check separately, one helper each (projects, people, threads). Not steps or search queries; leave empty for a single task.",
+    ),
 });
 export type Brief = z.infer<typeof briefSchema>;
 
@@ -171,7 +186,29 @@ export async function cancelAgentTree(runId: string): Promise<number> {
   return count;
 }
 
-function proposeActionSpec(proposals: ProposedAction[]): ToolSpec {
+// Email addresses and URL hosts in a proposal that the trusted text (brief and
+// the assistant's messages) doesn't mention.
+export function unverifiedTargets(args: unknown, trusted: string): string[] {
+  const text = JSON.stringify(args).toLowerCase();
+  const known = trusted.toLowerCase();
+  const targets = new Set<string>();
+  for (const [email] of text.matchAll(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g))
+    if (!known.includes(email)) targets.add(email);
+  for (const [url] of text.matchAll(/https?:\/\/[^\s"'<>\\]+/g)) {
+    try {
+      const host = new URL(url).hostname;
+      if (!known.includes(host)) targets.add(host);
+    } catch {
+      /* not a URL */
+    }
+  }
+  return [...targets];
+}
+
+function proposeActionSpec(
+  proposals: ProposedAction[],
+  trusted: () => Promise<string>,
+): ToolSpec {
   const schema = z.strictObject({
     tool: z.string().trim().min(1).max(100),
     arguments: z.record(z.string(), z.unknown()),
@@ -193,20 +230,28 @@ function proposeActionSpec(proposals: ProposedAction[]): ToolSpec {
     execute: async (args) => {
       if (proposals.length >= 10)
         throw new ToolError("validation", "At most 10 proposals per agent");
-      proposals.push(schema.parse(args));
+      const proposal: ProposedAction = schema.parse(args);
+      const unverified = unverifiedTargets(proposal.arguments, await trusted());
+      if (unverified.length) proposal.unverifiedTargets = unverified;
+      proposals.push(proposal);
       return {
         recorded: true,
         executed: false,
+        ...(unverified.length && {
+          unverifiedTargets: unverified,
+          warning:
+            "These targets were not named in your brief; they came from tool content.",
+        }),
         note: "Proposal recorded for review. Do not describe it as done.",
       };
     },
   };
 }
 
-const delegateArgs = briefSchema.extend({
+const delegateArgs = briefSchema.omit({ items: true }).extend({
   agent: z.string().trim().min(1).max(100).default("reader"),
 });
-function delegateSpec(parent: AgentRun): ToolSpec {
+function delegateSpec(parent: AgentRun, options: AgentOptions): ToolSpec {
   return {
     name: "delegate",
     label: "Delegate a sub-task",
@@ -231,7 +276,7 @@ function delegateSpec(parent: AgentRun): ToolSpec {
           "Delegate to a leaf agent such as reader",
         );
       const child = await createAgentRun({ parent, definition, brief });
-      const outcome = await executeAgent(child, ctx.signal);
+      const outcome = await executeAgent(child, ctx.signal, options);
       await finalizeAgent(child, outcome);
       return outcome;
     },
@@ -241,18 +286,31 @@ function delegateSpec(parent: AgentRun): ToolSpec {
 async function agentSpecs(
   run: AgentRun,
   proposals: ProposedAction[],
+  options: AgentOptions,
 ): Promise<ToolSpec[]> {
   const def = run.definition!;
   const allowed = def.tools as string[];
-  const specs = (await readToolsFor(run.userId)).filter(
+  const specs = (await (options.readTools ?? readToolsFor)(run.userId)).filter(
     (s) =>
       isReadOnly(s) &&
       (allowed.includes("*") || allowed.includes(s.name)) &&
       (def.memoryScope !== "none" || s.name !== "memory_search"),
   );
-  specs.push(proposeActionSpec(proposals));
+  specs.push(
+    proposeActionSpec(proposals, async () =>
+      [
+        JSON.stringify(run.brief),
+        ...(
+          await prisma.agentMessage.findMany({
+            where: { runId: run.id },
+            select: { text: true },
+          })
+        ).map((m) => m.text),
+      ].join("\n"),
+    ),
+  );
   if (run.depth < AGENT_MAX_DEPTH && def.canSpawn)
-    specs.push(delegateSpec(run));
+    specs.push(delegateSpec(run, options));
   return specs;
 }
 
@@ -277,6 +335,10 @@ function briefText(brief: Brief, def: Prisma.AgentDefinition): string {
       ? "Success criteria: " + brief.success_criteria
       : "",
     brief.context ? "Context from the assistant: " + brief.context : "",
+    brief.items?.length
+      ? "Items, one helper each (delegate them all in one step):\n" +
+        brief.items.map((item) => "- " + item).join("\n")
+      : "",
     "</brief>",
     `Budget: ${def.maxSteps} model steps, $${def.maxUsd} and ${def.timeoutSec} seconds.`,
   ]
@@ -289,6 +351,7 @@ const fromParent = (texts: string[]) =>
 export async function executeAgent(
   run: AgentRun,
   parentSignal?: AbortSignal,
+  options: AgentOptions = {},
 ): Promise<AgentOutcome> {
   const log = getLogger().child({ agentRunId: run.id, depth: run.depth });
   const def = run.definition;
@@ -323,7 +386,7 @@ export async function executeAgent(
   let chain: Promise<unknown> = Promise.resolve();
   // Spend anywhere in the task (siblings, helpers) is only known in the
   // database: settle this run's bookkeeping, then check before each tool runs.
-  const guarded = (await agentSpecs(run, proposals)).map(
+  const guarded = (await agentSpecs(run, proposals, options)).map(
     (spec): ToolSpec => ({
       ...spec,
       execute: async (args, ctx) => {
@@ -517,23 +580,24 @@ export async function executeAgent(
 }
 
 // Record the runtime's status and, for a background agent, post it to the
-// parent conversation's inbox. A run canceled meanwhile stays canceled and
-// posts nothing: whoever canceled it already knows.
+// parent conversation's inbox in the same transaction, so a finished agent
+// always reports. A run canceled meanwhile stays canceled and posts nothing:
+// whoever canceled it already knows.
 export async function finalizeAgent(
   run: Pick<Prisma.AgentRun, "id" | "conversationId" | "userId" | "depth">,
   outcome: AgentOutcome,
 ): Promise<void> {
-  const updated = await prisma.agentRun.updateMany({
-    where: { id: run.id, status: { in: ACTIVE } },
-    data: {
-      status: outcome.status,
-      result: outcome as unknown as InputJsonValue,
-      finishedAt: new Date(),
-    },
-  });
-  if (!updated.count || run.depth !== 1 || outcome.status === "canceled")
-    return;
   await prisma.$transaction(async (tx) => {
+    const updated = await tx.agentRun.updateMany({
+      where: { id: run.id, status: { in: ACTIVE } },
+      data: {
+        status: outcome.status,
+        result: outcome as unknown as InputJsonValue,
+        finishedAt: new Date(),
+      },
+    });
+    if (!updated.count || run.depth !== 1 || outcome.status === "canceled")
+      return;
     const input = await tx.inboxInput.upsert({
       where: {
         conversationId_dedupeKey: {
@@ -569,9 +633,17 @@ export async function finalizeAgent(
   });
 }
 
+export function createAgentProcessor(options: AgentOptions = {}) {
+  return (
+    job: Pick<Job<{ runId: string }>, "data" | "moveToDelayed">,
+    token?: string,
+  ) => runAgentJob(job, token, options);
+}
+
 export async function runAgentJob(
   job: Pick<Job<{ runId: string }>, "data" | "moveToDelayed">,
   token?: string,
+  options: AgentOptions = {},
 ): Promise<void> {
   const run = await prisma.agentRun.findUnique({
     where: { id: job.data.runId },
@@ -604,7 +676,7 @@ export async function runAgentJob(
   }
   let outcome: AgentOutcome;
   try {
-    outcome = await executeAgent(run);
+    outcome = await executeAgent(run, undefined, options);
   } catch (error) {
     getLogger().error({ err: error, agentRunId: run.id }, "agent job failed");
     outcome = { status: "failed", summary: "", proposedActions: [] };

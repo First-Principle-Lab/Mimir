@@ -47,7 +47,7 @@ ALTER TABLE "AgentMessage" ADD CONSTRAINT "AgentMessage_runId_fkey"
 INSERT INTO "AgentDefinition" ("id", "userId", "name", "description", "prompt", "tools", "canSpawn", "maxSteps", "maxUsd", "timeoutSec") VALUES
   ('builtin-researcher', NULL, 'researcher',
    'Background worker for multi-step lookups across connected accounts, remembered facts and the web. Can split independent reads across focused helpers. Returns a summary and proposed actions.',
-   'Work through the brief with the read tools. When it splits into independent reads (several sources, several items), delegate each to a focused helper instead of doing them one by one. Combine what you learn into one summary.',
+   'Work through the brief with the read tools. Hand listed items, and independent parts that need several steps each, to focused helpers with delegate, and combine their reports into one summary. Do single lookups yourself, in parallel when they are independent.',
    '["*"]', true, 24, 0.2, 600),
   ('builtin-reader', NULL, 'reader',
    'Focused leaf worker for one lookup or one item of a fan-out. Cannot delegate.',

