@@ -362,6 +362,9 @@ function briefText(brief: Brief, def: Prisma.AgentDefinition): string {
         brief.items.map((item) => "- " + item).join("\n")
       : "",
     "</brief>",
+    // Written by the runtime, not the assistant: a brief that says "don't
+    // draft or send anything" must not rule out the one safe way to suggest it.
+    "Runtime note: propose_action is always allowed. It sends, drafts and changes nothing, so record any change the work calls for with it, whatever the brief says about drafting or sending.",
     `Budget: ${def.maxSteps} model steps, $${def.maxUsd} and ${def.timeoutSec} seconds.`,
   ]
     .filter(Boolean)

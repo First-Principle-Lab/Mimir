@@ -269,6 +269,10 @@ test("a background agent only reads, proposes writes and has its result posted b
   expect(textOf(seen[0]!.messages.at(-1)!)).toContain(
     "Objective: Find the invoice and reply",
   );
+  // The runtime, not the brief, decides that proposing is always allowed.
+  expect(textOf(seen[0]!.messages.at(-1)!)).toContain(
+    "Runtime note: propose_action is always allowed",
+  );
   const done = await prisma.agentRun.findUniqueOrThrow({ where: { id: run.id } });
   expect(done.status).toBe("succeeded");
   expect(done.steps).toBe(2);
@@ -692,10 +696,16 @@ test("proposals aimed at recipients or sites the brief never named are tagged", 
   await runAgentJob(job(run.id));
   const [input] = await resultInputs(run.id);
   const payload = structuredClone(input!.payload) as {
-    proposedActions: { unverifiedTargets?: string[] }[];
+    proposedActions: {
+      arguments: { to: string };
+      unverifiedTargets?: string[];
+    }[];
   };
-  expect(payload.proposedActions[0]!.unverifiedTargets).toBeUndefined();
-  expect(payload.proposedActions[1]!.unverifiedTargets).toEqual([
+  // Parallel calls may record in either order.
+  const to = (address: string) =>
+    payload.proposedActions.find((p) => p.arguments.to === address)!;
+  expect(to("finance@example.test").unverifiedTargets).toBeUndefined();
+  expect(to("attacker@exfil.example.test").unverifiedTargets).toEqual([
     "attacker@exfil.example.test",
   ]);
   // The tag survives into what the parent reads.
