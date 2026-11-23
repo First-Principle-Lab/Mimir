@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { getPrismaClient, type InputJsonValue } from "@mimir/backend-core";
+import { ConnectionError, ProviderError } from "@mimir/connection-provider";
 import { ToolError } from "@mimir/tasks";
 import {
   isReadOnly,
@@ -118,6 +119,18 @@ export async function requestApproval(
   };
 }
 
+// Errors that prove an action took no effect: the provider answered with a
+// rejection (bad request, auth, rate limit, not found or conflict), the
+// connection was unusable, or a pre-flight check failed before any request.
+// Tools throw ToolError("validation") only before reaching their provider.
+// Anything else (timeouts, 5xx, lost responses) leaves the outcome uncertain.
+export function rejectedBeforeEffect(error: unknown): boolean {
+  if (error instanceof ConnectionError) return true;
+  if (error instanceof ProviderError)
+    return error.kind === "validation_failed" || error.kind === "rate_limited";
+  return error instanceof ToolError && error.kind === "validation";
+}
+
 // Called only while holding the conversation lease. A crashed or aborted call
 // may have reached its provider, so uncertainty is terminal for this key.
 export async function interruptStartedActions(runId: string): Promise<void> {
@@ -135,7 +148,10 @@ export async function interruptStartedActions(runId: string): Promise<void> {
     await prisma.actionApproval.updateMany({
       where: { id: approval.id, status: "executing" },
       data: {
-        status: attempt?.status === "succeeded" ? "succeeded" : "interrupted",
+        status:
+          attempt?.status === "succeeded" || attempt?.status === "failed"
+            ? attempt.status
+            : "interrupted",
       },
     });
   }
@@ -184,10 +200,20 @@ export async function executeJournaled(
         "An action key or tool-call ID was reused with different arguments; nothing was executed",
       );
     if (previous?.status === "succeeded") return previous.result;
-    throw new ToolError(
-      "blocked",
-      "This action was interrupted or is already running. It will not be retried automatically. Verify its outcome with the provider before starting a new action.",
-    );
+    // A rejected attempt changed nothing, so the same action may run again.
+    const rearmed =
+      previous?.status === "failed" &&
+      (
+        await prisma.actionAttempt.updateMany({
+          where: { idempotencyKey: key, status: "failed" },
+          data: { status: "started", finishedAt: null },
+        })
+      ).count === 1;
+    if (!rearmed)
+      throw new ToolError(
+        "blocked",
+        "This action was interrupted or is already running. It will not be retried automatically. Verify its outcome with the provider before starting a new action.",
+      );
   }
   let onAbort: (() => void) | undefined;
   try {
@@ -213,6 +239,21 @@ export async function executeJournaled(
     });
     return result;
   } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (rejectedBeforeEffect(error) && !ctx.signal?.aborted) {
+      await prisma.actionAttempt.update({
+        where: { idempotencyKey: key },
+        data: {
+          status: "failed",
+          result: { error: message },
+          finishedAt: new Date(),
+        },
+      });
+      throw new ToolError(
+        "validation",
+        "The provider rejected the action, so nothing changed: " + message,
+      );
+    }
     await prisma.actionAttempt.update({
       where: { idempotencyKey: key },
       data: { status: "interrupted", finishedAt: new Date() },
@@ -220,7 +261,7 @@ export async function executeJournaled(
     throw new ToolError(
       "blocked",
       "Action interrupted; it may have reached the provider and will not be retried automatically. " +
-        (error instanceof Error ? error.message : ""),
+        message,
     );
   } finally {
     if (onAbort) ctx.signal?.removeEventListener("abort", onAbort);

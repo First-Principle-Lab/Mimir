@@ -10,6 +10,8 @@ export interface RuntimeContextInput {
   facts: Pick<FactHit, "subject" | "fact">[];
   // The interaction agent sees its active background agents; workers omit it.
   agents?: { id: string; agent: string; status: string; objective: string }[];
+  // Approval cards still open in this conversation (interaction agent only).
+  approvals?: { id: string; toolName: string; status: string; createdAt: Date }[];
 }
 
 function validTimezone(tz: string | null): string {
@@ -104,6 +106,13 @@ export function buildRuntimeContext(input: RuntimeContextInput): string {
     for (const a of input.agents)
       lines.push(
         `- ${a.id} (${a.agent}, ${a.status}): ${a.objective.slice(0, 160)}`,
+      );
+  }
+  if (input.approvals?.length) {
+    lines.push("Open approval cards (withdraw one with cancel_approval):");
+    for (const a of input.approvals)
+      lines.push(
+        `- ${a.id}: ${a.toolName}, ${a.status}, raised ${formatLocalTime(a.createdAt, input.timezone)}`,
       );
   }
   if (input.facts.length > 0) {

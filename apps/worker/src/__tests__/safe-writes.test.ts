@@ -12,7 +12,10 @@ const {
 } = await import("@mimir/connection-provider");
 const { invokeTool, executeJournaled, interruptStartedActions, decideAction } =
   await import("../harness/actions.js");
-const { resumeApproval } = await import("../harness/approvals.js");
+const { cancelApprovalSpec, resumeApproval } =
+  await import("../harness/approvals.js");
+const { rpc } = await import("../integrations/http-rpc.js");
+const { ProviderError } = await import("@mimir/connection-provider");
 const { writeToolsFor } = await import("../harness/write-tools.js");
 const { mcpActionRisk } = await import("../harness/mcp-tools.js");
 const { mimirExtension } = await import("../harness/extension.js");
@@ -195,6 +198,98 @@ test("an approved provider error remains untrusted and cannot enable an automati
   ).toBe("interrupted");
   await resumeApproval(input, [spec], ctx);
   expect(calls).toBe(1);
+});
+test("a provider rejection is recorded as failed, may run again and tells the user nothing changed", async () => {
+  const ctx = await context();
+  let calls = 0;
+  let reject = true;
+  const spec = synthetic({
+    execute: async () => {
+      calls++;
+      if (reject)
+        throw new ProviderError("validation_failed", "provider rejected request (422)");
+      return { ok: true };
+    },
+  });
+  const pending = (await invokeTool(spec, { body: "Reviewed" }, ctx)) as {
+    approvalId: string;
+  };
+  const input = await answer(pending.approvalId, ctx);
+  const result = await resumeApproval(input, [spec], ctx);
+  expect(result).toContain("nothing changed");
+  expect(result).not.toContain("uncertain");
+  expect(
+    (await prisma.actionApproval.findUniqueOrThrow({
+      where: { id: pending.approvalId },
+    })).status,
+  ).toBe("failed");
+  const attempt = await prisma.actionAttempt.findFirstOrThrow({
+    where: { runId: ctx.runId },
+  });
+  expect(attempt.status).toBe("failed");
+  // The same reviewed action may run again once the provider accepts it.
+  reject = false;
+  expect(await executeJournaled(spec, { body: "Reviewed" }, ctx)).toEqual({
+    ok: true,
+  });
+  expect(calls).toBe(2);
+  expect(
+    (await prisma.actionAttempt.findFirstOrThrow({ where: { runId: ctx.runId } }))
+      .status,
+  ).toBe("succeeded");
+  // An outage stays uncertain and is never repeated.
+  const outage = synthetic({
+    name: "outage_fixture",
+    execute: async () => {
+      throw new ProviderError("provider_down", "provider api 503");
+    },
+  });
+  await expect(
+    executeJournaled(outage, {}, { ...ctx, toolCallId: randomUUID() }),
+  ).rejects.toThrow("may have reached the provider");
+  await expect(
+    executeJournaled(outage, {}, { ...ctx, toolCallId: randomUUID() }),
+  ).rejects.toThrow("will not be retried");
+});
+test("rpc reports every 4xx except a timeout as a provider rejection", async () => {
+  const status = (code: number) => async () => ({ status: code, data: {} });
+  for (const code of [404, 409, 422])
+    await expect(rpc(status(code), "/x")).rejects.toBeInstanceOf(ProviderError);
+  await expect(rpc(status(408), "/x")).rejects.not.toBeInstanceOf(
+    ProviderError,
+  );
+});
+test("cancel_approval withdraws an open card in this conversation only", async () => {
+  const ctx = await context();
+  const pending = (await invokeTool(synthetic(), { body: "Draft" }, ctx)) as {
+    approvalId: string;
+  };
+  await expect(
+    invokeTool(
+      cancelApprovalSpec,
+      { approval_id: pending.approvalId },
+      { ...ctx, conversationId: randomUUID(), toolCallId: randomUUID() },
+    ),
+  ).rejects.toThrow("No such approval card");
+  expect(
+    await invokeTool(
+      cancelApprovalSpec,
+      { approval_id: pending.approvalId },
+      { ...ctx, toolCallId: randomUUID() },
+    ),
+  ).toEqual({ withdrawn: true });
+  expect(
+    (await prisma.actionApproval.findUniqueOrThrow({
+      where: { id: pending.approvalId },
+    })).status,
+  ).toBe("canceled");
+  await expect(
+    invokeTool(
+      cancelApprovalSpec,
+      { approval_id: pending.approvalId },
+      { ...ctx, toolCallId: randomUUID() },
+    ),
+  ).rejects.toThrow("already canceled");
 });
 test("untrusted reads taint later reversible external writes and ambient writes require review", async () => {
   const ctx = await context();

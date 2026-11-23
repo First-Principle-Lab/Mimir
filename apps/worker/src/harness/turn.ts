@@ -29,7 +29,11 @@ import { SessionHost } from "./session-host.js";
 import { readToolsFor, type ToolRunContext } from "./tools.js";
 import { toolsFor } from "./capabilities.js";
 import { interruptStartedActions } from "./actions.js";
-import { resumeApproval } from "./approvals.js";
+import {
+  cancelApprovalSpec,
+  openApprovals,
+  resumeApproval,
+} from "./approvals.js";
 import { activeAgents, agentTools } from "./agent-tools.js";
 import {
   claimInputs,
@@ -348,8 +352,10 @@ async function runConversation(
       sanitize,
     }),
     ...agentTools({ queue: options.agentQueue }),
+    cancelApprovalSpec,
   );
   const agents = await activeAgents(conversationId);
+  const approvals = await openApprovals(conversationId, userId);
   if (inputs.some((i) => i.kind === "approval_answer")) {
     const controller = new AbortController();
     const deadline = setTimeout(
@@ -395,6 +401,7 @@ async function runConversation(
           timezone: user?.timezone ?? null,
           facts,
           agents,
+          approvals,
         }) +
         (interruptedBefore.length
           ? "\n<action_status>Prior actions were interrupted and may have reached their providers: " +
@@ -464,6 +471,9 @@ async function runConversation(
 
   let lastDeltaAt = 0;
   let lastStopReason: string | undefined;
+  // The provider's own error (auth, quota, invalid request), so a failed
+  // model call isn't recorded as an empty reply.
+  let modelError: string | undefined;
   session.subscribe((event) => {
     if (
       event.type === "message_end" ||
@@ -507,6 +517,7 @@ async function runConversation(
         role?: string;
         model?: string;
         stopReason?: string;
+        errorMessage?: string;
         durationMs?: number;
         usage?: {
           input?: number;
@@ -518,6 +529,10 @@ async function runConversation(
       };
       if (m.role === "assistant") {
         lastStopReason = m.stopReason;
+        if (m.stopReason === "error") {
+          modelError = m.errorMessage ?? "model call failed";
+          log.error({ modelError }, "model call failed");
+        }
         usage.steps += 1;
         usage.model = m.model;
         usage.promptTokens += m.usage?.input ?? 0;
@@ -704,8 +719,17 @@ async function runConversation(
       costUsd: totals().costUsd,
       error: failed
         ? {
-            reason: runError ? "run_error" : "empty_reply",
-            message: runError instanceof Error ? runError.message : undefined,
+            reason: runError
+              ? "run_error"
+              : lastStopReason === "error"
+                ? "model_error"
+                : "empty_reply",
+            message:
+              runError instanceof Error
+                ? runError.message
+                : lastStopReason === "error"
+                  ? modelError
+                  : undefined,
           }
         : undefined,
     },

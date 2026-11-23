@@ -27,6 +27,10 @@ export async function rpc<T>(request: RequestFn, path: string, opts: RpcOptions 
   if (res.status === 400) throw new ProviderError("validation_failed", "provider rejected request");
   if (res.status === 204) return undefined as T;
   if (res.status >= 500) throw new ProviderError("provider_down", `provider api ${res.status}`);
+  // Any other 4xx (not found, conflict, unprocessable) is a rejection too; a
+  // request timeout is not, since the provider may still have acted.
+  if (res.status >= 400 && res.status !== 408)
+    throw new ProviderError("validation_failed", `provider rejected request (${res.status})`);
   if (res.status < 200 || res.status >= 300) throw new Error(`provider api returned ${res.status}`);
   return res.data as T;
 }
