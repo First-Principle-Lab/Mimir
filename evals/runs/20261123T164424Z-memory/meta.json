@@ -1,0 +1,14 @@
+{
+  "topic": "phase-5-context-memory-readiness",
+  "suite": "memory",
+  "status": "failed",
+  "exitCode": 1,
+  "testedCommit": "2bdd5319b9e671c583f80eda3809f6ea592a6440",
+  "testedRef": "feat/phase-5-context-memory",
+  "branch": "eval/2026-11-23-memory-phase-5-context-memory-readiness",
+  "runId": "20261123T164424Z-memory",
+  "startedAt": "2026-11-23T16:44:25Z",
+  "finishedAt": "2026-11-23T16:44:54Z",
+  "runner": "local",
+  "runUrl": null
+}

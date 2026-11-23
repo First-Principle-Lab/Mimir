@@ -1,0 +1,29 @@
+# Eval: phase-5-context-memory-readiness
+
+| | |
+|---|---|
+| Suite | `memory` |
+| Status | **failed** (exit 1) |
+| Tested commit | `2bdd5319b9e671c583f80eda3809f6ea592a6440` (from `feat/phase-5-context-memory`) |
+| Started / finished (UTC) | 2026-11-23T16:44:25Z / 2026-11-23T16:44:54Z |
+| Runner | local |
+
+## Summary
+
+```
+$ bun scripts/eval-memory.ts
+{"level":30,"time":1795452273104,"pid":3783861,"hostname":"omarchy","conversationId":"cd3859e1-6b8e-4b4d-bb8f-2b1bb1aa8db7","runId":"617f1dd1-bfe8-47ed-9501-0f1e45174253","promptTokens":3934,"completionTokens":71,"costUsd":0.00059112,"steps":1,"toolCalls":0,"model":"~deepseek/deepseek-v4-flash-latest","durationMs":1877,"msg":"harness run settled"}
+{"kind":"transition-baseline","fixture":"application-channel","split":"development","provider":"legacy-pgvector","model":"~deepseek/deepseek-v4-flash-latest","extractionModel":"openai/gpt-4o-mini","messages":19,"characters":4669,"estimatedTokens":1168,"ingestionMs":4455.586082,"retrievalMs":631.1170700000002,"answerLatencyMs":2010.8293409999997,"factRecall":0.75,"extractionPrecision":1,"extractionRecall":0.6666666666666666,"extractionF1":0.8,"extractionJudgment":{"supported":2,"covered":2,"invented":0,"stale":0,"notes":""},"judgeModel":"openai/gpt-4o-mini","answerCorrect":true,"facts":[{"subject":"user","fact":"is applying for the research MSc at Alder University","status":"active","sourceMessageId":"74243180-74be-40e0-8358-fc2720cba864"},{"subject":"user","fact":"is applying for the AI MSc at Birch University","status":"active","sourceMessageId":"74243180-74be-40e0-8358-fc2720cba864"}],"promptTokens":3934,"completionTokens":71,"costUsd":0.00059112,"inferenceSucceeded":true,"answer":"Your two choices:\n\n- **Alder University** — Research MSc\n- **Birch University** — AI MSc\n\nMessage format: **chat message** (not email), giving only the university and course names. I'll keep that format for any application lists.\n\nLet me know when you're ready and I'll draft the message to your adviser."}
+{"level":50,"time":1795452294313,"pid":3783861,"hostname":"omarchy","conversationId":"417b910a-cd67-4021-b619-29159bd12e06","runId":"9073bf64-f7e4-4266-b052-d41e31db4255","err":{"type":"TypeError","message":"undefined is not an object (evaluating 'm.role')","stack":"TypeError: undefined is not an object (evaluating 'm.role')\n    at assistantText (/home/too_geeky/projects/fpl/Mimir/apps/worker/src/harness/turn.ts:137:7)\n    at runConversation (/home/too_geeky/projects/fpl/Mimir/apps/worker/src/harness/turn.ts:666:16)\n    at async runTurn (/home/too_geeky/projects/fpl/Mimir/apps/worker/src/harness/turn.ts:1030:11)\n    at async ask (/home/too_geeky/projects/fpl/Mimir/scripts/eval-memory.ts:71:9)\n    at processTicksAndRejections (native:7:39)"},"msg":"harness run failed"}
+{"level":50,"time":1795452294332,"pid":3783861,"hostname":"omarchy","conversationId":"417b910a-cd67-4021-b619-29159bd12e06","messageId":"9bd419ea-4956-4d10-b5e4-fae05546a7ca","err":{"type":"TypeError","message":"undefined is not an object (evaluating 'm.role')","stack":"TypeError: undefined is not an object (evaluating 'm.role')\n    at assistantText (/home/too_geeky/projects/fpl/Mimir/apps/worker/src/harness/turn.ts:137:7)\n    at runConversation (/home/too_geeky/projects/fpl/Mimir/apps/worker/src/harness/turn.ts:710:21)\n    at async runTurn (/home/too_geeky/projects/fpl/Mimir/apps/worker/src/harness/turn.ts:1030:11)\n    at async ask (/home/too_geeky/projects/fpl/Mimir/scripts/eval-memory.ts:71:9)\n    at processTicksAndRejections (native:7:39)"},"runId":"9073bf64-f7e4-4266-b052-d41e31db4255","msg":"run setup/persistence failed; settling response contract"}
+{"kind":"summary","status":"failed","error":"No actual inference for 9bd419ea-4956-4d10-b5e4-fae05546a7ca"}
+error: script "eval-memory" exited with code 1
+```
+
+## Files
+
+- `README.md`
+- `memory.jsonl`
+- `meta.json`
+- `model-config.json`
+- `output.log`
