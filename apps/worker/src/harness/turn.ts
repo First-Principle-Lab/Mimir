@@ -381,7 +381,6 @@ async function runConversation(
     }),
     cancelApprovalSpec,
   );
-  const agents = await activeAgents(conversationId);
   if (inputs.some((i) => i.kind === "approval_answer")) {
     const controller = new AbortController();
     const deadline = setTimeout(
@@ -414,9 +413,6 @@ async function runConversation(
       clearInterval(cancel);
     }
   }
-  // Resolve decisions before building the volatile tail: failed/completed
-  // cards must not still appear there as open approvals.
-  const approvals = await openApprovals(conversationId, userId);
   let session: AgentSession;
   try {
     session = await sessions.open(conversationId, {
@@ -430,20 +426,29 @@ async function runConversation(
       profileContext: JSON.stringify({ timezone: user?.timezone ?? "UTC" }),
       specs,
       ctx: { userId, conversationId, runId, safety, assertOwned },
-      runtimeContext: () =>
-        buildRuntimeContext({
-          now: options.now?.() ?? new Date(),
-          timezone: user?.timezone ?? null,
-          facts,
-          agents,
-          approvals,
-        }) +
-        (interruptedBefore.length
-          ? "\n<action_status>Prior actions were interrupted and may have reached their providers: " +
-            interruptedBefore.map((a) => a.toolName).join(", ") +
-            ". Never repeat them automatically; report uncertainty and verify outcomes with read tools.</action_status>"
-          : "") +
-        `\n<response_contract>Mode: ${ambient ? "ambient" : "chat"}. ${ambient ? "No user reply is owed. Speak only with send_to_user(text, urgency, reason_code). For nothing new or relevant, finish with exactly NO_REPLY. Never deliver plain final text." : "A reply is owed to every user input in this turn, including corrections. Finish with a visible answer covering all inputs. NO_REPLY is forbidden."}</response_contract>`,
+      runtimeContext: async () => {
+        // Tool calls and other workers can change these during this turn.
+        // A captured list would advertise withdrawn cards or finished agents.
+        const [agents, approvals] = await Promise.all([
+          activeAgents(conversationId),
+          openApprovals(conversationId, userId),
+        ]);
+        return (
+          buildRuntimeContext({
+            now: options.now?.() ?? new Date(),
+            timezone: user?.timezone ?? null,
+            facts,
+            agents,
+            approvals,
+          }) +
+          (interruptedBefore.length
+            ? "\n<action_status>Prior actions were interrupted and may have reached their providers: " +
+              interruptedBefore.map((a) => a.toolName).join(", ") +
+              ". Never repeat them automatically; report uncertainty and verify outcomes with read tools.</action_status>"
+            : "") +
+          `\n<response_contract>Mode: ${ambient ? "ambient" : "chat"}. ${ambient ? "No user reply is owed. Speak only with send_to_user(text, urgency, reason_code). For nothing new or relevant, finish with exactly NO_REPLY. Never deliver plain final text." : "A reply is owed to every user input in this turn, including corrections. Finish with a visible answer covering all inputs. NO_REPLY is forbidden."}</response_contract>`
+        );
+      },
     });
   } catch (e) {
     if (!(e instanceof ModelNotAvailableError)) throw e;

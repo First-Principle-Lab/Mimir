@@ -2,11 +2,13 @@ import { describe, expect, test } from "bun:test";
 import {
   SessionManager,
   type ContextEvent,
+  type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import {
   clearOldToolResults,
   compactionSettings,
   CLEARED_TOOL_RESULT,
+  prepareSessionContext,
 } from "../harness/context-policy.js";
 
 type Message = ContextEvent["messages"][number];
@@ -67,5 +69,43 @@ describe("tiered context", () => {
       reserveTokens: 12800,
       keepRecentTokens: 12800,
     });
+  });
+  test.each(["Nothing to compact (session too small)", "Already compacted"])(
+    "an ineligible native compaction preserves context: %s",
+    async (message) => {
+      const manager = SessionManager.inMemory("/tmp");
+      manager.appendMessage(user("x".repeat(4000)));
+      const before = manager.getEntries();
+      let attempts = 0;
+      await prepareSessionContext(
+        {
+          sessionManager: manager,
+          compact: async () => {
+            attempts++;
+            throw new Error(message);
+          },
+        } as unknown as AgentSession,
+        1000,
+        "Continue",
+      );
+      expect(attempts).toBe(1);
+      expect(manager.getEntries()).toEqual(before);
+    },
+  );
+  test("unexpected compaction failures still propagate", async () => {
+    const manager = SessionManager.inMemory("/tmp");
+    manager.appendMessage(user("x".repeat(4000)));
+    await expect(
+      prepareSessionContext(
+        {
+          sessionManager: manager,
+          compact: async () => {
+            throw new Error("summary provider failed");
+          },
+        } as unknown as AgentSession,
+        1000,
+        "Continue",
+      ),
+    ).rejects.toThrow("summary provider failed");
   });
 });

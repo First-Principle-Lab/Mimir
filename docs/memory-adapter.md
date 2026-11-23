@@ -60,12 +60,14 @@ million characters, with a stable output reference and original source/trust.
 window, old tool results outside the current user turn become append-only context
 edits; tool-call/result pairing and raw journal entries remain. At 80%, native pi
 summarization writes a compaction checkpoint and retains roughly 20% recent
-history. Checkpoints and edits survive normal session hydration. The physical
+history. Native refusal when no history is eligible for compaction is a no-op;
+unexpected summarization failures still propagate. Checkpoints and edits survive normal session hydration. The physical
 model limit bounds the configured input-plus-output window; the output allocation
 is preserved with the token field actually used by the provider.
 
 Prompt order is stable system/tool declarations, profile, native summary, recent
-messages and volatile runtime tail. Runtime values are not persisted into the
+messages and volatile runtime tail. Approval and agent status are refreshed on each
+model call, including after tools change them. Runtime values are not persisted into the
 transcript. OpenRouter requests carry a stable hash-derived `session_id` per
 user/conversation. Existing ModelCallLog counters record provider-reported cache
 reads; a stable prefix cannot guarantee provider cache hits. The readiness suite

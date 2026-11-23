@@ -24,8 +24,8 @@ import { decideAction, invokeTool } from "./actions.js";
 export interface MimirExtensionOptions {
   specs: ToolSpec[];
   ctx: ToolRunContext;
-  // Rebuilt per model call so the time stays current across a long run.
-  runtimeContext: () => string;
+  // Rebuilt per model call so time and mutable status stay current.
+  runtimeContext: () => string | Promise<string>;
   generation?: { maxOutputTokens: number; temperature: number };
   contextWindow?: number;
   sessionManager?: SessionManager;
@@ -212,7 +212,7 @@ export function mimirExtension(
         });
       messages.push({
         role: "user",
-        content: [{ type: "text", text: opts.runtimeContext() }],
+        content: [{ type: "text", text: await opts.runtimeContext() }],
         timestamp: Date.now(),
       } as (typeof messages)[number]);
       return { messages };

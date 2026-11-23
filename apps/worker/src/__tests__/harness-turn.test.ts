@@ -1005,6 +1005,69 @@ describe("Phase Two inbox and response rules", () => {
       await prisma.actionAttempt.deleteMany({ where: { runId: run.id } });
     }));
 
+  test("the runtime tail refreshes withdrawn and new cards between model calls", async () =>
+    isolated(async (id) => {
+      const post: import("../harness/tools.js").ToolSpec = {
+        name: "reviewed_issue",
+        label: "Create issue",
+        description: "Synthetic reviewed action",
+        parameters: { type: "object", properties: {} },
+        risk: "communicate_external",
+        sideEffect: "irreversible",
+        idempotent: false,
+        provenance: "test:tail-refresh",
+        resultTrust: "untrusted",
+        outputMaxChars: 1000,
+        execute: async () => ({ created: true }),
+      };
+      const options = { readTools: async () => [post] };
+      const a = await input(id, "Create the reviewed issue");
+      faux.setResponses([
+        reply([fauxToolCall("reviewed_issue", {})], { stopReason: "toolUse" }),
+        reply([fauxText("Review the card.")]),
+      ]);
+      await runTurn(
+        { conversationId: id, userId, messageId: a.message.id },
+        options,
+      );
+      const old = await prisma.actionApproval.findFirstOrThrow({
+        where: { run: { conversationId: id } },
+      });
+      const b = await input(id, "Withdraw that card and prepare a replacement");
+      const start = seen.length;
+      faux.setResponses([
+        reply([fauxToolCall("cancel_approval", { approval_id: old.id })], {
+          stopReason: "toolUse",
+        }),
+        reply([fauxToolCall("reviewed_issue", {})], { stopReason: "toolUse" }),
+        reply([fauxText("Review the replacement card.")]),
+      ]);
+      await runTurn(
+        { conversationId: id, userId, messageId: b.message.id },
+        options,
+      );
+      const pending = await prisma.actionApproval.findFirstOrThrow({
+        where: { run: { conversationId: id }, status: "pending" },
+      });
+      const tails = seen
+        .slice(start)
+        .map((c) =>
+          c.messages.filter((m) => textOf(m).includes("<runtime_context>")),
+        )
+        .map((messages) => JSON.stringify(messages));
+      expect(tails).toHaveLength(3);
+      expect(tails[0]).toContain(old.id);
+      expect(tails[1]).not.toContain(old.id);
+      expect(tails[1]).not.toContain(pending.id);
+      expect(tails[2]).not.toContain(old.id);
+      expect(tails[2]).toContain(pending.id);
+      expect(
+        (await prisma.actionApproval.findUniqueOrThrow({
+          where: { id: old.id },
+        })).status,
+      ).toBe("canceled");
+    }));
+
   test("a rejected approval blocks unrelated writes, clears the open-card tail and accepts a fresh user request", async () =>
     isolated(async (id) => {
       const { ProviderError } = await import("@mimir/connection-provider");
