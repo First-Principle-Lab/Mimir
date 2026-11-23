@@ -1,0 +1,14 @@
+{
+  "topic": "phase-5-context-memory-completion",
+  "suite": "harness",
+  "status": "failed",
+  "exitCode": 1,
+  "testedCommit": "23bdd654b6a55ee82d8eebf0580223e4f80822f1",
+  "testedRef": "feat/phase-5-context-memory",
+  "branch": "eval/2026-11-23-harness-phase-5-context-memory-completion-4",
+  "runId": "20261123T175742Z-harness",
+  "startedAt": "2026-11-23T17:57:43Z",
+  "finishedAt": "2026-11-23T18:06:28Z",
+  "runner": "local",
+  "runUrl": null
+}
