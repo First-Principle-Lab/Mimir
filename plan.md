@@ -20,8 +20,9 @@ and 12 red-team checks on `b135214`. The [completion review](docs/phase-3-review
 records the requirement audit, 14 resolved findings and immutable evidence; PR #5 was
 squash-merged into `dev` as `6831b62`. Phase 4 adds background agents, in-turn
 delegation, budgets and cascade cancel; its [completion review](docs/phase-4-review.md)
-records 10 resolved findings, 265 tests and 38/38 real-inference scenarios plus 12
-red-team checks on `9b26a46`. Phases 5–6 have not started.
+records 13 resolved findings. A Phase 3 schema defect found afterwards was fixed in
+#7. The integrated gate on `64d4e1d` (Phases 3–4 with #7) passed 268 tests, 38/38 real-inference
+scenarios and 12 red-team checks: `eval/2026-11-23-harness-phase-3-4-completion`. Phases 5–6 have not started.
 Existing chats retain their latest 50 text messages on first pi use and durable
 facts are preserved. Phase 2 adds inbox/notification scenarios, durable reminders
 and read-only watchers to the Phase 0/1 harness runner.

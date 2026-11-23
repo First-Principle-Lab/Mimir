@@ -61,6 +61,21 @@ exploratory live runs. Each fix has a regression test or a live scenario.
     isolate their queue. Both are injectable, like the turn processor's tools.
     The relay and fast path now share one job ID and option set.
 
+The completion review re-read the whole phase diff before integration and
+found three more defects, each fixed in `8cd29b8` with a regression test that
+fails on the previous code:
+
+11. A retried agent job restarted from its brief with only unread messages,
+    silently dropping corrections an earlier attempt had consumed. The opening
+    prompt now includes every message the agent received.
+12. In-turn helpers left active by a crashed attempt stayed `running` until the
+    stale sweep. A new attempt now marks them interrupted.
+13. Spawn limits, unknown definitions and messages to finished agents were
+    refused inside the action journal, so the model was told the action might
+    have reached a provider and the identical call stayed blocked for the run.
+    They are now refused in `prepare`, before journaling; the locked check in
+    `createAgentRun` still guards races.
+
 Evaluation corrections: two scenarios were reworded after their first runs.
 The proposal case gained the finance email it assumed and plainer wording ("I'll
 review it before anything is sent"), and the fan-out case asks for a helper per
@@ -69,7 +84,7 @@ subject) is worked around in the scripted test.
 
 ## Verification and limits
 
-- Frozen install, lint, workspace typecheck, all **265 tests** (forced
+- Frozen install, lint, workspace typecheck, all **268 tests** (forced
   uncached) and the duplication check pass locally; the eval scripts pass a
   focused TypeScript check. Web and desktop code are unchanged.
 - The migration is forward-only and additive: three new nullable/defaulted
@@ -91,9 +106,12 @@ subject) is worked around in the scripted test.
 
 ## Published evidence
 
-The passing run is
-[`eval/2026-11-23-harness-phase-4-subagents`](https://github.com/First-Principle-Lab/Mimir/tree/eval/2026-11-23-harness-phase-4-subagents).
-It tests commit `9b26a46b84b21b611d29824c55d6285fac6a0261` with actual
+The completion gate is
+[`eval/2026-11-23-harness-phase-3-4-completion`](https://github.com/First-Principle-Lab/Mimir/tree/eval/2026-11-23-harness-phase-3-4-completion).
+It tests `64d4e1dd533ae760feffd59f6e8995f1a4cf5a09`: Phase 4 with findings 11–13 fixed, merged with `dev`
+(Phase 3 and #7), which is the tree that lands in `dev`. The earlier pre-review run
+[`eval/2026-11-23-harness-phase-4-subagents`](https://github.com/First-Principle-Lab/Mimir/tree/eval/2026-11-23-harness-phase-4-subagents)
+on `9b26a46` also passed 38/38 and 12/12; its figures follow. Both use actual
 OpenRouter inference using `~deepseek/deepseek-v4-flash-latest` for both the
 interaction agent and agents:
 

@@ -95,6 +95,17 @@ all pending cards in the conversation, including cards raised by ambient work;
 provider 4xx responses are recorded as interrupted (uncertain) rather than
 failed.
 
+Found after merge, while building Phase 4:
+
+15. Zod 4's `toJSONSchema()` defaults to output mode, so fields with defaults
+    (`calendarId`, `attendees`, issue `body`, page `text`) were required in the
+    schemas pi validates calls against, and the server-side defaults never
+    applied. Fixed in [#7](https://github.com/First-Principle-Lab/Mimir/pull/7)
+    with a regression test; its eval
+    [`eval/2026-11-23-harness-tool-schema-defaults`](https://github.com/First-Principle-Lab/Mimir/tree/eval/2026-11-23-harness-tool-schema-defaults)
+    passed 33/33 scenarios and 12/12 red-team checks, and the integrated
+    Phase 3–4 gate `eval/2026-11-23-harness-phase-3-4-completion` passed on the merged tree.
+
 ## Verification and limits
 
 - Frozen install, lint, workspace typecheck, all **255 tests** (forced uncached),
