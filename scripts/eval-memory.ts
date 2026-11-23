@@ -213,12 +213,14 @@ try {
     const factRecall =
       f.expected.filter((e) => contains(recallText, e)).length /
       f.expected.length;
+    // Freeze background extraction before the interaction model can repair or
+    // mutate memory while answering. Those writes are a separate observation.
+    const extracted = await core.memoryGateway().export(p, "conversation");
     const response = await ask(p, f.query);
     const answer = response.answer.toLowerCase();
     const answerCorrect =
       f.expected.every((e) => contains(answer, e)) &&
       !f.forbidden.some((e) => contains(answer, e));
-    const extracted = await core.memoryGateway().export(p, "conversation");
     const activeFacts = extracted.records.filter((r) => r.status === "active");
     const annotated = expectedDurableFacts(f);
     const recordKeys = activeFacts.map((_, i) => "record_" + i);
@@ -386,6 +388,13 @@ try {
       completionTokens: response.run.completionTokens,
       costUsd: response.run.costUsd,
       inferenceSucceeded: response.run.status === "succeeded",
+      memoryWritesDuringAnswer: await prisma.actionAttempt.count({
+        where: {
+          runId: response.run.id,
+          toolName: { in: ["remember", "forget"] },
+          status: "succeeded",
+        },
+      }),
       answer: response.answer,
     });
     assert(

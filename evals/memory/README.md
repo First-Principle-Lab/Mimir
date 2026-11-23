@@ -19,6 +19,9 @@ evidence quotations per annotation, clarifies stale-current semantics and reject
 contradictory supported/invented/stale labels. This changes measurement validation,
 not fixtures or provider behavior; machine grades remain diagnostic and require
 manual adjudication before provider qualification.
+Extraction is snapshotted before asking the held-out question, so memory writes
+by the interaction model cannot inflate ingestion quality. Successful memory
+writes during the answer are counted separately.
 The six fixtures and annotations are unchanged; no held-out tuning occurred. This is the transition reference and adapter
 readiness gate. It does not select or rank external providers. Phase 7 runs all
 five candidates after the staging prerequisites in plan.md.
