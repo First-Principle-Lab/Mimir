@@ -7,9 +7,9 @@ test("memory grading requires exact record/annotation labels and real evidence",
       record_1: { supported: false, invented: true, stale: false },
     },
     annotations: {
-      annotation_0: { covered: true, evidence: "fact A" },
-      annotation_1: { covered: false, evidence: "" },
-      annotation_2: { covered: false, evidence: "" },
+      annotation_0: { covered: true, evidence: ["fact A", "fact B"] },
+      annotation_1: { covered: false, evidence: [] as string[] },
+      annotation_2: { covered: false, evidence: [] as string[] },
     },
   };
   const grade = () =>
@@ -21,7 +21,7 @@ test("memory grading requires exact record/annotation labels and real evidence",
     stale: 0,
     notes: "",
   });
-  data.annotations.annotation_0.evidence = "invented quotation";
+  data.annotations.annotation_0.evidence = ["invented quotation"];
   expect(grade).toThrow("coverage evidence");
   expect(() =>
     parseMemoryGrades(JSON.stringify(data), ["fact A", "fact B"], 2),

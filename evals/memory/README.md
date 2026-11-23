@@ -1,6 +1,6 @@
-# Memory readiness protocol (v4)
+# Memory readiness protocol (v5)
 
-Version 4 freezes the final Phase 5 readiness run. Version 1 exposed a
+Version 5 freezes the final Phase 5 readiness run. Version 1 exposed a
 compaction response-tracking failure; its immutable failed run is retained.
 Version 2 strengthened live correction/forget, cross-session search and stored-output
 checks and dispatches transcript batches through the background extraction entry
@@ -12,6 +12,13 @@ verbatim extracted-record evidence for coverage. Evidence must match a record;
 the judge may still make semantic mistakes and needs human auditing. Malformed/ungrounded submissions are retained and may be repaired up to twice
 with validator feedback. Scores use the first valid submission; valid scores are
 never retried to seek a better outcome. Three invalid submissions fail the gate.
+The passing v4 transition runs also exposed a scoring limitation in manual review:
+one annotation may be supported jointly by several extracted records, and an
+explicitly obsolete date is not a stale-current claim. Version 5 allows multiple
+evidence quotations per annotation, clarifies stale-current semantics and rejects
+contradictory supported/invented/stale labels. This changes measurement validation,
+not fixtures or provider behavior; machine grades remain diagnostic and require
+manual adjudication before provider qualification.
 The six fixtures and annotations are unchanged; no held-out tuning occurred. This is the transition reference and adapter
 readiness gate. It does not select or rank external providers. Phase 7 runs all
 five candidates after the staging prerequisites in plan.md.

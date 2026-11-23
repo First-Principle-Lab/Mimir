@@ -36,24 +36,33 @@ export function parseMemoryGrades(
     stale: 0,
     notes: typeof value.notes === "string" ? value.notes : "",
   };
-  for (const label of Object.values(records)) {
+  for (const [key, label] of Object.entries(records)) {
     const r = label as Record<string, unknown>;
-    for (const key of ["supported", "invented", "stale"] as const) {
-      if (!r || typeof r[key] !== "boolean")
+    for (const field of ["supported", "invented", "stale"] as const) {
+      if (!r || typeof r[field] !== "boolean")
         throw new Error("Invalid record judgment");
-      if (r[key]) counts[key]++;
+      if (r[field]) counts[field]++;
     }
+    if (r.supported && (r.invented || r.stale))
+      throw new Error(
+        `Inconsistent labels for ${key}: wholly supported current facts cannot also be invented or stale-current`,
+      );
   }
   for (const [key, label] of Object.entries(annotations)) {
     const a = label as { covered?: unknown; evidence?: unknown };
     if (
       !a ||
       typeof a.covered !== "boolean" ||
-      typeof a.evidence !== "string" ||
+      !Array.isArray(a.evidence) ||
       (a.covered
-        ? !a.evidence ||
-          !recordTexts.some((t) => t.includes(a.evidence as string))
-        : a.evidence !== "")
+        ? !a.evidence.length ||
+          a.evidence.some(
+            (quote) =>
+              typeof quote !== "string" ||
+              !quote ||
+              !recordTexts.some((t) => t.includes(quote)),
+          )
+        : a.evidence.length !== 0)
     )
       throw new Error(
         `Invalid extraction coverage evidence for ${key}: quotation absent from extracted records or inconsistent with covered label`,
