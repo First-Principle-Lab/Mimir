@@ -43,6 +43,13 @@ export interface ToolRunContext {
   runId?: string;
   toolCallId?: string;
   signal?: AbortSignal;
+  assertOwned?: () => Promise<void>;
+  safety?: {
+    ambient: boolean;
+    tainted: boolean;
+    pendingApproval: boolean;
+    allowedDomains: Set<string>;
+  };
 }
 
 export interface ToolSpec {
@@ -59,10 +66,13 @@ export interface ToolSpec {
   resultTrust: "trusted" | "untrusted";
   outputMaxChars: number;
   deferred?: boolean;
+  prepare?(args: unknown, ctx: ToolRunContext): Promise<unknown> | unknown;
+  effectiveRisk?(args: unknown): ToolRisk;
+  idempotencyKey?(args: unknown, ctx: ToolRunContext): string;
   execute(args: unknown, ctx: ToolRunContext): Promise<unknown>;
 }
 
-// Phase 1 ships read tools only; the policy gate refuses anything else.
+// Only effect-free public/private reads may bypass the action journal.
 export function isReadOnly(
   spec: Pick<ToolSpec, "risk" | "sideEffect">,
 ): boolean {
@@ -158,9 +168,8 @@ const READ_PRIVATE = {
   resultTrust: "untrusted",
 } as const;
 
-// The tools one user's session gets: memory + the read tools of the integrations
-// they have connected + web reading. User-added MCP servers are left out until
-// the Phase 3 policy gate can review their (possibly writing) tools.
+// Connected read capabilities and web reading. toolsFor composes this registry
+// with the separate write and custom MCP registries behind the shared policy.
 export async function readToolsFor(userId: string): Promise<ToolSpec[]> {
   const specs: ToolSpec[] = [
     memorySearchSpec,

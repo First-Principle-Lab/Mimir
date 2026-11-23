@@ -6,6 +6,9 @@ import type {
 import {
   burstReadyAt,
   getLogger,
+  getConfig,
+  sanitizeVisibleText,
+  visibleDomains,
   getPrismaClient,
   HARNESS_FACTS_MIN_MESSAGES,
   HARNESS_LOCK_TTL_MS,
@@ -23,7 +26,10 @@ import { publishUserEvent, redis } from "../infra/redis.js";
 import { buildRuntimeContext } from "./context.js";
 import { ModelNotAvailableError } from "./pi-runtime.js";
 import { SessionHost } from "./session-host.js";
-import { readToolsFor } from "./tools.js";
+import { readToolsFor, type ToolRunContext } from "./tools.js";
+import { toolsFor } from "./capabilities.js";
+import { interruptStartedActions } from "./actions.js";
+import { resumeApproval } from "./approvals.js";
 import {
   claimInputs,
   inputText,
@@ -159,6 +165,7 @@ async function writeReply(opts: {
   failed: boolean;
   model?: string;
   usage: RunUsage;
+  runTotals?: RunUsage;
   durationMs: number;
 }): Promise<string> {
   const reply = await prisma.$transaction(async (tx) => {
@@ -207,11 +214,11 @@ async function writeReply(opts: {
         status: opts.failed ? "failed" : "succeeded",
         replyMessageId: message.id,
         model: opts.model,
-        steps: opts.usage.steps,
-        toolCalls: opts.usage.toolCalls,
-        promptTokens: opts.usage.promptTokens,
-        completionTokens: opts.usage.completionTokens,
-        costUsd: opts.usage.costUsd,
+        steps: (opts.runTotals ?? opts.usage).steps,
+        toolCalls: (opts.runTotals ?? opts.usage).toolCalls,
+        promptTokens: (opts.runTotals ?? opts.usage).promptTokens,
+        completionTokens: (opts.runTotals ?? opts.usage).completionTokens,
+        costUsd: (opts.runTotals ?? opts.usage).costUsd,
         finishedAt: new Date(),
       },
     });
@@ -248,6 +255,13 @@ async function runConversation(
   const { conversationId, userId } = data;
   const log = getLogger().child({ conversationId, runId });
   const startedAt = Date.now();
+  const interruptedBefore = await prisma.actionAttempt.findMany({
+    where: { runId, status: "interrupted" },
+    select: { toolName: true },
+  });
+  const previousUsage = inputs.some((i) => i.kind === "approval_answer")
+    ? await prisma.agentRun.findUnique({ where: { id: runId } })
+    : null;
 
   const [user, messageCount, rows, specs] = await Promise.all([
     prisma.user.findUnique({
@@ -259,7 +273,7 @@ async function runConversation(
       where: { conversationId },
       orderBy: { seq: "asc" },
     }),
-    (options.readTools ?? readToolsFor)(userId),
+    (options.readTools ?? toolsFor)(userId),
   ]);
   let facts: FactHit[] = [];
   if (messageCount >= HARNESS_FACTS_MIN_MESSAGES) {
@@ -278,6 +292,15 @@ async function runConversation(
     steps: 0,
     toolCalls: 0,
   };
+  const totals = (): RunUsage => ({
+    ...usage,
+    steps: usage.steps + (previousUsage?.steps ?? 0),
+    toolCalls: usage.toolCalls + (previousUsage?.toolCalls ?? 0),
+    promptTokens: usage.promptTokens + (previousUsage?.promptTokens ?? 0),
+    completionTokens:
+      usage.completionTokens + (previousUsage?.completionTokens ?? 0),
+    costUsd: usage.costUsd + (previousUsage?.costUsd ?? 0),
+  });
   const history =
     rows.length === 0
       ? (
@@ -290,7 +313,26 @@ async function runConversation(
       : [];
 
   const response = { sent: false, interrupted: false };
-  const ambient = !inputs.some((i) => i.kind === "user");
+  const ambient = !inputs.some(
+    (i) => i.kind === "user" || i.kind === "approval_answer",
+  );
+  const ownMessages = await prisma.message.findMany({
+    where: { conversationId, role: "user" },
+    select: { content: true },
+  });
+  const safety: NonNullable<ToolRunContext["safety"]> = {
+    ambient,
+    pendingApproval: false,
+    tainted:
+      rows.some((r) => JSON.stringify(r.data).includes("<untrusted_content")) ||
+      inputs.some((i) => i.kind === "agent_result" || i.kind === "event"),
+    allowedDomains: visibleDomains(
+      ownMessages.map((m) => m.content),
+      getConfig().BROWSER_ALLOWED_DOMAINS,
+    ),
+  };
+  const sanitize = (text: string) =>
+    sanitizeVisibleText(text, safety.allowedDomains);
   specs.push(
     ...responseTools({
       userId,
@@ -300,21 +342,59 @@ async function runConversation(
       ambient,
       response,
       assertOwned,
+      sanitize,
     }),
   );
+  if (inputs.some((i) => i.kind === "approval_answer")) {
+    const controller = new AbortController();
+    const deadline = setTimeout(
+      () => controller.abort(),
+      HARNESS_TURN_TIMEOUT_MS,
+    );
+    const cancel = setInterval(() => {
+      void pendingInputs(conversationId)
+        .then((fresh) => {
+          if (fresh.some((i) => i.kind === "user")) controller.abort();
+        })
+        .catch(() => controller.abort());
+    }, 100);
+    try {
+      const results: string[] = [];
+      for (const input of inputs)
+        results.push(
+          await resumeApproval(input, specs, {
+            userId,
+            conversationId,
+            runId,
+            safety,
+            assertOwned,
+            signal: controller.signal,
+          }),
+        );
+      content = results.join("\n\n");
+    } finally {
+      clearTimeout(deadline);
+      clearInterval(cancel);
+    }
+  }
   let session: AgentSession;
   try {
     session = await sessions.open(conversationId, {
       entries: rows.map((r) => r.data as unknown as SessionEntry),
       history,
       specs,
-      ctx: { userId, conversationId, runId },
+      ctx: { userId, conversationId, runId, safety, assertOwned },
       runtimeContext: () =>
         buildRuntimeContext({
           now: options.now?.() ?? new Date(),
           timezone: user?.timezone ?? null,
           facts,
         }) +
+        (interruptedBefore.length
+          ? "\n<action_status>Prior actions were interrupted and may have reached their providers: " +
+            interruptedBefore.map((a) => a.toolName).join(", ") +
+            ". Never repeat them automatically; report uncertainty and verify outcomes with read tools.</action_status>"
+          : "") +
         `\n<response_contract>Mode: ${ambient ? "ambient" : "chat"}. ${ambient ? "No user reply is owed. Speak only with send_to_user(text, urgency, reason_code). For nothing new or relevant, finish with exactly NO_REPLY. Never deliver plain final text." : "A reply is owed to every user input in this turn, including corrections. Finish with a visible answer covering all inputs. NO_REPLY is forbidden."}</response_contract>`,
     });
   } catch (e) {
@@ -331,6 +411,7 @@ async function runConversation(
       content: UNAVAILABLE_REPLY,
       failed: true,
       usage,
+      runTotals: totals(),
       durationMs: 0,
     });
     await prisma.agentRun.update({
@@ -410,7 +491,7 @@ async function runConversation(
         void publishUserEvent(userId, "message_delta", {
           conversationId,
           inputMessageId: data.messageId,
-          text,
+          text: sanitize(text),
         }).catch(() => {});
       }
     }
@@ -573,6 +654,11 @@ async function runConversation(
       runError !== undefined ||
       lastStopReason === "error" ||
       lastStopReason === "aborted");
+  const uncertainActions = await prisma.actionAttempt.count({
+    where: { runId, status: { in: ["started", "interrupted"] } },
+  });
+  const uncertainReply =
+    "An action was interrupted and may have reached its provider. I won't retry it automatically. Please verify its outcome.";
   const replyId = ambient
     ? undefined
     : await writeReply({
@@ -582,13 +668,16 @@ async function runConversation(
         inputMessageId: data.messageId,
         inputs,
         content: response.interrupted
-          ? "Stopped."
+          ? "Stopped." + (uncertainActions ? " " + uncertainReply : "")
           : failed
-            ? FALLBACK_REPLY
-            : finalText,
+            ? uncertainActions
+              ? uncertainReply
+              : FALLBACK_REPLY
+            : sanitize(finalText),
         failed,
         model: usage.model,
         usage,
+        runTotals: totals(),
         durationMs,
       });
   await prisma.agentRun.update({
@@ -602,11 +691,11 @@ async function runConversation(
       replyMessageId: replyId,
       model: usage.model,
       finishedAt: new Date(),
-      steps: usage.steps,
-      toolCalls: usage.toolCalls,
-      promptTokens: usage.promptTokens,
-      completionTokens: usage.completionTokens,
-      costUsd: usage.costUsd,
+      steps: totals().steps,
+      toolCalls: totals().toolCalls,
+      promptTokens: totals().promptTokens,
+      completionTokens: totals().completionTokens,
+      costUsd: totals().costUsd,
       error: failed
         ? {
             reason: runError ? "run_error" : "empty_reply",
@@ -615,6 +704,15 @@ async function runConversation(
         : undefined,
     },
   });
+
+  const pendingApprovalCount = await prisma.actionApproval.count({
+    where: { runId, status: "pending", expiresAt: { gt: new Date() } },
+  });
+  if (pendingApprovalCount)
+    await prisma.agentRun.update({
+      where: { id: runId },
+      data: { status: "waiting_human", finishedAt: null },
+    });
 
   if (ambient)
     await prisma.inboxInput.updateMany({
@@ -788,12 +886,42 @@ export async function runTurn(
     // Ambient work waits when a user turn exists; user text is never hidden in
     // an ambient contract. Pending background inputs keep their own queue jobs.
     const users = inputs.filter((i) => i.kind === "user");
-    const batch = users.length ? users : inputs;
+    const approvalInput = inputs.find((i) => i.kind === "approval_answer");
+    const batch = users.length
+      ? users
+      : approvalInput
+        ? [approvalInput]
+        : inputs;
     const first = batch[0]!;
-    const runId = await startRun(
-      { ...data, messageId: first.messageId ?? undefined },
-      first,
-    );
+    let runId: string;
+    if (first.kind === "approval_answer") {
+      const p = payloadOf(first);
+      if (p.kind !== "approval_answer")
+        throw new Error("Invalid approval input");
+      const approval = await prisma.actionApproval.findFirst({
+        where: {
+          id: p.approvalId,
+          run: { conversationId: data.conversationId, userId: data.userId },
+        },
+      });
+      if (!approval) {
+        await prisma.inboxInput.update({
+          where: { id: first.id },
+          data: { status: "consumed", consumedAt: new Date() },
+        });
+        return;
+      }
+      runId = approval.runId;
+    } else
+      runId = await startRun(
+        { ...data, messageId: first.messageId ?? undefined },
+        first,
+      );
+    await interruptStartedActions(runId);
+    await prisma.agentRun.update({
+      where: { id: runId },
+      data: { status: "running", finishedAt: null },
+    });
     activeRunId = runId;
     activeBatch = batch;
     await claimInputs(batch, runId);
@@ -850,7 +978,9 @@ export async function runTurn(
       { err: error, runId: activeRunId },
       "run setup/persistence failed; settling response contract",
     );
-    if (activeBatch.some((i) => i.kind === "user"))
+    if (
+      activeBatch.some((i) => i.kind === "user" || i.kind === "approval_answer")
+    )
       await writeReply({
         conversationId: data.conversationId,
         userId: data.userId,

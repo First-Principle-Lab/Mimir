@@ -5,15 +5,21 @@
 parts of 10). Phases 14 (production hardening) and 15 (launch readiness) of that file still apply and
 are folded into Phase 6 below. Repo rules for contributors and coding agents are in [AGENTS.md](AGENTS.md).
 
-Progress as of 2026-11-22: Phase 0 infrastructure is merged into `dev`. Phase 1
+Progress as of 2026-11-23: Phase 0 infrastructure is merged into `dev`. Phase 1
 is implemented and reviewed in PR #3. The review fixes trust-boundary, lock,
 session-opening, model-limit, streaming and DST findings and evaluates actual
 inference through HTTP intake, BullMQ, durable journals and socket delivery.
 The full requirement/evidence matrix is in [the Phase 1 review](docs/phase-1-review.md).
 Phase 1's published real-inference run and required CI passed; PR #3 is merged into
-`dev`. Phase 2 is implemented and under its [completion review](docs/phase-2-review.md),
-with its 23/23 real-inference run passing and PR CI still pending. Phases 3–6 have not started. External writes are unavailable;
-existing chats retain their latest 50 text messages on first pi use and durable
+`dev`. Phase 2's [completion review](docs/phase-2-review.md), 230 tests,
+23/23 real-inference scenarios and required CI passed on `002e5d7`; PR #4 was
+squash-merged into `dev` as `ab80704`. Phase 3 is implemented and reviewed in
+[PR #5](https://github.com/First-Principle-Lab/Mimir/pull/5): journaled write tools,
+exact-argument approval cards, 255 passing tests, 33/33 real-inference scenarios
+and 12 red-team checks on `b135214`. The [completion review](docs/phase-3-review.md)
+records the requirement audit, 14 resolved findings and immutable evidence. Phase 4
+starts after PR #5 is in `dev`; Phases 5–6 have not started.
+Existing chats retain their latest 50 text messages on first pi use and durable
 facts are preserved. Phase 2 adds inbox/notification scenarios, durable reminders
 and read-only watchers to the Phase 0/1 harness runner.
 

@@ -1,11 +1,9 @@
+import { randomUUID } from "node:crypto";
 import {
   createToolSearchExtension,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import {
-  getPrismaClient,
-  HARNESS_TOOL_OUTPUT_MAX_CHARS,
-} from "@mimir/backend-core";
+import { HARNESS_TOOL_OUTPUT_MAX_CHARS } from "@mimir/backend-core";
 import {
   describeToolError,
   isReadOnly,
@@ -13,6 +11,8 @@ import {
   type ToolRunContext,
   type ToolSpec,
 } from "./tools.js";
+
+import { decideAction, invokeTool } from "./actions.js";
 
 export interface MimirExtensionOptions {
   specs: ToolSpec[];
@@ -49,7 +49,12 @@ export function mimirExtension(
           sideEffect: "none",
           idempotent: true,
           provenance: "pi:tool-search@1.6.0",
-          resultTrust: "trusted",
+          // Custom server descriptions are also untrusted MCP content.
+          resultTrust: opts.specs.some((s) =>
+            s.provenance.startsWith("mimir:mcp/"),
+          )
+            ? "untrusted"
+            : "trusted",
           outputMaxChars: HARNESS_TOOL_OUTPUT_MAX_CHARS,
           execute: async (args) =>
             (await discover("discovery", args)).content
@@ -71,37 +76,23 @@ export function mimirExtension(
         execute: async (toolCallId, params, signal) => {
           let onAbort: (() => void) | undefined;
           try {
-            if (!isReadOnly(spec)) {
-              if (!opts.ctx.runId)
-                throw new Error("Internal mutations require a journaled run");
-              await getPrismaClient().actionAttempt.upsert({
-                where: {
-                  runId_toolCallId: { runId: opts.ctx.runId, toolCallId },
-                },
-                create: {
-                  runId: opts.ctx.runId,
-                  toolCallId,
-                  toolName: spec.name,
-                },
-                update: {},
-              });
-            }
+            signal?.throwIfAborted();
             const aborted = new Promise<never>((_resolve, reject) => {
               onAbort = () => reject(new Error("Tool execution interrupted"));
               if (signal?.aborted) onAbort();
               else signal?.addEventListener("abort", onAbort, { once: true });
             });
             const value = await Promise.race([
-              spec.execute(params, { ...opts.ctx, toolCallId, signal }),
+              // Providers may omit or reuse call IDs (pi passes them through),
+              // so journal rows get a Mimir-unique one. Exactly-once comes from
+              // the action's idempotency key, not from this ID.
+              invokeTool(spec, params, {
+                ...opts.ctx,
+                toolCallId: toolCallId + "#" + randomUUID(),
+                signal,
+              }),
               aborted,
             ]);
-            if (!isReadOnly(spec))
-              await getPrismaClient().actionAttempt.update({
-                where: {
-                  runId_toolCallId: { runId: opts.ctx.runId!, toolCallId },
-                },
-                data: { status: "succeeded" },
-              });
             return {
               content: [{ type: "text", text: renderToolResult(spec, value) }],
               details: {},
@@ -124,27 +115,26 @@ export function mimirExtension(
       });
     }
 
-    // Policy gate. Phase 1 is read-only: anything that isn't a registered
-    // read tool is refused before it runs, whatever the model asked for.
+    // The fixed tier gate resolves inner actions before execution. The same
+    // decision is enforced again by invokeTool, including restored approvals.
     pi.on("tool_call", async (event) => {
       const spec = byName.get(event.toolName);
       if (!spec)
+        return { block: true, reason: "Unknown tool: " + event.toolName };
+      if (!isReadOnly(spec) && !opts.ctx.runId)
+        return { block: true, reason: "A mutation requires a journaled run" };
+      try {
+        const policy = decideAction(spec, event.input, opts.ctx);
+        if (policy.decision === "block")
+          return { block: true, reason: policy.reason };
+        // Approvals are materialized by the executor with normalized arguments.
+        return undefined;
+      } catch {
         return {
           block: true,
-          reason: `There is no tool named ${event.toolName}.`,
-        };
-      const internal =
-        ["send_to_user", "schedule"].includes(spec.name) &&
-        spec.provenance === "mimir:harness/internal" &&
-        spec.risk === "write_reversible_self";
-      if (!isReadOnly(spec) && !internal) {
-        return {
-          block: true,
-          reason:
-            "Only reading is enabled right now, so this action can't be performed.",
+          reason: "Invalid inner action; no action was executed",
         };
       }
-      return undefined;
     });
 
     // The pinned OpenRouter provider uses the OpenAI chat payload. Keep the

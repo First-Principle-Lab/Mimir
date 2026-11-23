@@ -99,8 +99,11 @@ export async function recordNotificationReceipt(
   const run = await db.agentRun.findFirst({
     where: { replyMessageId: messageId },
   });
-  if (!run) return;
-  const inputs = await db.inboxInput.findMany({ where: { runId: run.id } });
+  const inputs = await db.inboxInput.findMany({
+    where: {
+      OR: [{ replyMessageId: messageId }, ...(run ? [{ runId: run.id }] : [])],
+    },
+  });
   for (const input of inputs) {
     const p = inboxPayload.parse(input.payload);
     if (p.kind === "event" || p.kind === "routine_fire")

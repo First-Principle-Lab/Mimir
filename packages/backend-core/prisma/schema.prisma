@@ -60,6 +60,7 @@ model Conversation {
   inbox          InboxInput[]
   deliveries     Delivery[]
   routines       Routine[]
+  emailDrafts    EmailDraft[]
 
   @@index([userId])
 }
@@ -219,6 +220,7 @@ model AgentRun {
   startedAt        DateTime     @default(now())
   finishedAt       DateTime?
   journal          AgentStep[]
+  approvals        ActionApproval[]
 
   @@unique([inputMessageId])
   @@index([conversationId, startedAt])
@@ -314,18 +316,59 @@ model RoutineScratch {
   notes          Json?
 }
 
-// Phase Two internal mutations use this journal too. External writing tools
-// remain disabled until Phase Three adds approval and reconciliation.
+// Committed before executing a side effect. A started attempt found on recovery
+// is uncertain and becomes interrupted; it is never automatically executed again.
 model ActionAttempt {
   id             String @id @default(uuid())
   runId          String
   toolCallId     String
   toolName       String
+  idempotencyKey String @unique
+  arguments      Json @default("{}")
   status         String @default("started")
   result         Json?
   createdAt      DateTime @default(now())
+  finishedAt     DateTime?
 
   @@unique([runId, toolCallId])
+}
+
+// The card and executor share these immutable arguments. Decisions change only
+// status, never the tool or arguments. Ownership is inherited from the run.
+model ActionApproval {
+  id             String @id
+  runId          String
+  run            AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  toolCallId     String
+  toolName       String
+  provenance     String
+  arguments      Json
+  argumentHash   String
+  risk           String
+  reason         String
+  status         String @default("pending")
+  createdAt      DateTime @default(now())
+  decidedAt      DateTime?
+  expiresAt      DateTime
+
+  @@unique([runId, toolCallId])
+  @@index([status, expiresAt])
+}
+
+// Mimir-owned drafts keep unattended outbound mail inert. The send card expands
+// the complete immutable message; execution uses that message, never model prose.
+model EmailDraft {
+  id             String @id
+  userId         String
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  to             String
+  subject        String
+  body           String @db.Text
+  status         String @default("draft")
+  createdAt      DateTime @default(now())
+
+  @@index([userId, conversationId])
 }
 
 model AgentStep {

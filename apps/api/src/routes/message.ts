@@ -120,6 +120,18 @@ export function createMessageRouter(
       // The message and its turn's outbox row commit together, so a crash right
       // after this can't leave a message the harness never hears about.
       [userMsg, outboxId] = await prisma.$transaction(async (tx) => {
+        // A new instruction or stop invalidates cards from earlier turns.
+        await tx.actionApproval.updateMany({
+          where: {
+            run: { conversationId, userId },
+            status: { in: ["pending", "approved"] },
+          },
+          data: { status: "canceled" },
+        });
+        await tx.agentRun.updateMany({
+          where: { conversationId, userId, status: "waiting_human" },
+          data: { status: "interrupted", finishedAt: new Date() },
+        });
         const msg = await tx.message.create({
           data: {
             conversationId,

@@ -36,7 +36,7 @@ export const retryPolicy: JobsOptions = {
 };
 
 // A turn is interactive: retry a crashed or busy attempt quickly, a few times.
-// Re-running is safe while every tool is read-only (Phase 1).
+// Reads may repeat; the action journal prevents interrupted writes from retrying.
 export const turnRetryPolicy: JobsOptions = {
   attempts: 3,
   backoff: { type: "exponential", delay: 1000 },
@@ -120,6 +120,19 @@ export async function scheduleHarnessRecovery(): Promise<void> {
 }
 export async function recoverHarnessWork(): Promise<void> {
   const prisma = getPrismaClient();
+  await prisma.actionApproval.updateMany({
+    where: { status: "pending", expiresAt: { lte: new Date() } },
+    data: { status: "expired" },
+  });
+  await prisma.agentRun.updateMany({
+    where: {
+      status: "waiting_human",
+      approvals: {
+        none: { status: { in: ["pending", "approved", "executing"] } },
+      },
+    },
+    data: { status: "interrupted", finishedAt: new Date() },
+  });
   const inputs = await prisma.inboxInput.findMany({
     where: {
       status: { in: ["pending", "running"] },

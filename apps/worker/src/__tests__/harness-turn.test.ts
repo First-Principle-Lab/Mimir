@@ -885,6 +885,105 @@ describe("Phase Two inbox and response rules", () => {
         }),
       ).toBe(1);
     }));
+
+  test("Phase Three pauses for a card and resumes the same run without replaying the side effect", async () =>
+    isolated(async (id) => {
+      const a = await input(id, "Post this issue");
+      let calls = 0;
+      const spec: import("../harness/tools.js").ToolSpec = {
+        name: "test_post_issue",
+        label: "Post issue",
+        description: "Synthetic fixture",
+        parameters: {
+          type: "object",
+          properties: { title: { type: "string" } },
+          required: ["title"],
+        },
+        risk: "communicate_external",
+        sideEffect: "irreversible",
+        idempotent: false,
+        provenance: "test:post",
+        resultTrust: "untrusted",
+        outputMaxChars: 1000,
+        execute: async (args) => {
+          calls++;
+          return { posted: args };
+        },
+      };
+      const options = { readTools: async () => [spec] };
+      faux.setResponses([
+        reply([fauxToolCall("test_post_issue", { title: "Reviewed title" })], {
+          stopReason: "toolUse",
+        }),
+        reply([fauxText("Review the action card.")]),
+      ]);
+      await runTurn(
+        { conversationId: id, userId, messageId: a.message.id },
+        options,
+      );
+      const run = await prisma.agentRun.findUniqueOrThrow({
+        where: { inputMessageId: a.message.id },
+      });
+      expect(run.status).toBe("waiting_human");
+      expect(calls).toBe(0);
+      const approval = await prisma.actionApproval.findFirstOrThrow({
+        where: { runId: run.id },
+      });
+      await prisma.actionApproval.update({
+        where: { id: approval.id },
+        data: { status: "approved" },
+      });
+      const answer = await prisma.inboxInput.create({
+        data: {
+          conversationId: id,
+          kind: "approval_answer",
+          source: "user:approval-card",
+          dedupeKey: approval.id,
+          payload: {
+            kind: "approval_answer",
+            approvalId: approval.id,
+            approved: true,
+          },
+        },
+      });
+      faux.setResponses([reply([fauxText("Posted the reviewed issue.")])]);
+      await runTurn(
+        { conversationId: id, userId, inputId: answer.id },
+        options,
+      );
+      expect(calls).toBe(1);
+      expect(
+        (await prisma.agentRun.findUniqueOrThrow({ where: { id: run.id } }))
+          .steps,
+      ).toBe(3);
+      expect(
+        await prisma.agentRun.count({ where: { conversationId: id } }),
+      ).toBe(1);
+      expect(
+        (await prisma.agentRun.findUniqueOrThrow({ where: { id: run.id } }))
+          .status,
+      ).toBe("succeeded");
+      expect(
+        (
+          await prisma.actionApproval.findUniqueOrThrow({
+            where: { id: approval.id },
+          })
+        ).status,
+      ).toBe("succeeded");
+      expect(
+        (
+          await prisma.inboxInput.findUniqueOrThrow({
+            where: { id: answer.id },
+          })
+        ).status,
+      ).toBe("consumed");
+      await runTurn(
+        { conversationId: id, userId, inputId: answer.id },
+        options,
+      );
+      expect(calls).toBe(1);
+      await prisma.actionAttempt.deleteMany({ where: { runId: run.id } });
+    }));
 });
 
 describe("repliesByInput", () => {

@@ -91,6 +91,18 @@ describe("mimirExtension tools", () => {
     expect(out.content[0]!.text.length).toBeLessThan(400);
   });
 
+  test("custom tool discovery metadata crosses the untrusted boundary", async () => {
+    const { tools } = load([
+      readSpec({ provenance: "mimir:mcp/server/custom" }),
+    ]);
+    const out = await tools
+      .get("tool_search")!
+      .execute("discovery", { query: "lookup" });
+    expect(out.content[0]!.text).toStartWith(
+      '<untrusted_content source="tool_search">',
+    );
+  });
+
   test("provider payload keeps tool fields and applies deployment generation limits", async () => {
     const { handlers } = load([], { maxOutputTokens: 321, temperature: 0.2 });
     expect(
@@ -127,7 +139,7 @@ describe("mimirExtension policy gate", () => {
     ).toMatchObject({ block: true });
   });
 
-  test("blocks a registered tool that writes", async () => {
+  test("blocks an unjournaled write", async () => {
     const { handlers } = load([
       readSpec({
         name: "send",
@@ -139,7 +151,7 @@ describe("mimirExtension policy gate", () => {
       await handlers.get("tool_call")!({ toolName: "send", input: {} }),
     ).toMatchObject({
       block: true,
-      reason: expect.stringContaining("Only reading is enabled"),
+      reason: expect.stringContaining("journaled run"),
     });
   });
 });
