@@ -58,7 +58,7 @@ routines) stay on BullMQ either way, because in-process children die with the pr
 | `@alphacoder-v0/pi-loops` 0.24.2        | MIT     | Loops that wake with their previous notes, run in a clean-context subagent, file findings to an inbox, and optionally pass a second adversarial "verify" subagent before reaching the user.                                                                                                     | Post-harness routines (§5); "nothing to report" handling |
 | `pi-schedule-prompt` 0.5.1              | MIT     | The `schedule_prompt` tool contract: recurring (cron/interval), one-shot, idle jobs; optional per-job model in a separate session. Its timers are in-process, so re-implement on BullMQ.                                                                                                        | Phase 2 `schedule` tool                                  |
 | `@gotgenes/pi-permission-system` 42.2.0 | MIT     | Allow / ask / deny gates over tools, MCP servers and skills; hides disallowed tools before the run. Config is a single file and the package has 267 releases (heavy churn), so port the model instead of depending on it.                                                                       | Phase 3 policy gate                                      |
-| `pi-hermes-memory` 0.11.0               | MIT     | Secret scanning before a memory write; search over past sessions; background learning every N turns; procedural "how I solved it" notes.                                                                                                                                                        | Phase 5 memory                                           |
+| `pi-hermes-memory` 0.11.0               | MIT     | Secret scanning before a memory write; search over past sessions; background learning every N turns; procedural "how I solved it" notes.                                                                                                                                                        | Phase 5 integration safeguards; no engine port            |
 | `pi-observational-memory` 3.1.4         | MIT     | Cache-friendly tiered compaction with observations and reflections. Compare against pi's built-in compaction first.                                                                                                                                                                             | Phase 5 compaction                                       |
 | `@trevonistrevon/pi-loop` 0.8.2         | MIT     | Loop/monitor/workflow vocabulary. Its own docs say wakes are memory-only and it runs only while pi is active — not durable, so reference only.                                                                                                                                                  | Phase 4                                                  |
 | `@onkernel/browser-loop` 0.12.1         | MIT     | Framework-neutral browser tool catalog with a `pi-agent-core` binding, running on Kernel browsers. Option to replace Browserbase, or port the catalog onto Browserbase.                                                                                                                         | Phase 3 browser tool                                     |
@@ -87,8 +87,20 @@ routines) stay on BullMQ either way, because in-process children die with the pr
    malicious skills in 2026.
 3. **Load only from an explicit list** in Mimir's `ResourceLoader`. Never discover extensions, skills or
    settings from `~/.pi` or project directories in the server.
-4. **Anything that touches credentials, approvals or memory writes is ported, not depended on.**
+4. **Keep credential handling, approvals and memory authorization in Mimir.** Port those policy
+   boundaries rather than delegating them to a pi extension. Memory engines/SDKs may be adopted
+   behind Mimir's adapter after the Phase 7 comparison; do not port a new memory engine.
 5. **Record each decision** (adopt / port / skip, with the reason) in this file.
+
+## Memory direction (2026-11-23)
+
+The active plan now calls for adopting an existing memory system after comparing
+Mem0, Letta, Cognee, Supermemory and Graphiti. Phase 5 prepares context and
+integration contracts; trials and the comparison report happen in Phase 7 after
+staging readiness. Memory-related ideas in the port survey are references for
+integration requirements, secret filtering and compaction, not a commitment to
+build a custom memory engine. No candidate or memory package is selected yet.
+See [the evaluation protocol](../memory-evaluation-plan.md).
 
 ## Phase 1 decisions (2026-11-22)
 

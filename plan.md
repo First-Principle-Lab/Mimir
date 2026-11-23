@@ -3,7 +3,8 @@
 **Status:** active plan, created 2026-11-22. It replaces the agent parts of
 [implementation-plan-final.md](implementation-plan-final.md) (Phases 4, 7, 8, 9 and the agent/context
 parts of 10). Phases 14 (production hardening) and 15 (launch readiness) of that file still apply and
-are folded into Phase 6 below. Repo rules for contributors and coding agents are in [AGENTS.md](AGENTS.md).
+are folded into Phases 6–7 below. Repo rules for contributors and coding agents are in [AGENTS.md](AGENTS.md).
+The memory decision below supersedes planned custom memory-engine enhancements in the older plan.
 
 Progress as of 2026-11-23: Phase 0 infrastructure is merged into `dev`. Phase 1
 is implemented and reviewed in PR #3. The review fixes trust-boundary, lock,
@@ -34,11 +35,16 @@ and read-only watchers to the Phase 0/1 harness runner.
 2. **Use pi as the harness:** the `@earendil-works/pi-coding-agent` SDK (v1.6.0, MIT), TypeScript, inside
    the existing worker. Not Rust: the rest of Mimir is ~24k lines of TypeScript and pi is TypeScript.
 3. **Mimir owns** the parts pi doesn't do for a multi-user server: durable storage in Postgres, background
-   work on BullMQ, multi-tenancy, the policy gate, delivery, and memory.
+   work on BullMQ, multi-tenancy, the policy gate, delivery, and memory integration controls.
 4. **Reuse pi packages where they fit a multi-user server; port the rest.** The survey and the
    adopt / port / skip list are in [docs/research/pi-packages.md](docs/research/pi-packages.md).
 5. **Every change goes dev → staging → main (production) through CI. Every eval run is saved on its own
    `eval/...` branch.** See [Branches, CI/CD and evals](#branches-cicd-and-evals).
+6. **Adopt an existing memory system rather than build a new memory engine.** Prepare Mimir first,
+   then evaluate **Mem0, Letta, Cognee, Supermemory and Graphiti** near the end of the rebuild.
+   Select from measured speed, long-chat recall and relevant fact extraction, with a comparison report
+   after all five evaluations. No provider is selected yet. Existing facts remain available during
+   the transition; new custom extraction, embedding, graph and retrieval enhancements are superseded.
 
 Background research: [docs/research/harness-design.md](docs/research/harness-design.md) (how 13 assistants
 are built, and the recommended design) and its notes in [docs/research/notes/](docs/research/notes/).
@@ -111,7 +117,8 @@ All of this goes in Phase 1, on `dev`. `main` (production) keeps serving v1 unti
 - `packages/connection-provider` (Composio, OAuth, connection health) and the integration API clients
   (`apps/worker/src/integrations/*`), which get wrapped as `ToolSpec`s
 - BullMQ, the outbox relay, `budget.ts`, usage accounting
-- Memory: `ExtractedFact`, embeddings, supersede, relation graph, fact extraction, the retrieval evals
+- Existing memory records and retrieval remain available for compatibility and later export/migration;
+  their evaluation fixtures are reused. The long-term backend is selected in Phase 7.
 - Mail/calendar/GitHub polling and webhooks, reshaped as watchers that post `event` inputs
 
 ## Phases
@@ -188,18 +195,24 @@ resolved findings, actual-inference evaluation and required CI described in the
 - Agent definitions stored as data (prompt, tools, model, memory scope) — the hook for named bots later
 - **Exit:** long tasks never block the chat; cost per top-level task stays under its cap.
 
-### Phase 5 — Context and memory
+### Phase 5 — Context and memory integration readiness
 
 - Prompt layout from most to least stable (system prompt without timestamps → tools → profile → summary
   → recent messages → per-turn tail) for prompt-cache hits; pin OpenRouter `session_id` per conversation
 - Compaction in tiers: store large outputs by reference; clear old tool results at ~60% of the window;
   summarize at ~80%
-- Memory: `remember` / `forget` / `memory_search` / `conversation_search` tools; facts get valid-from /
-  valid-to dates and a `scope` column; secret scanning before writes (port from `pi-hermes-memory`);
-  extraction moves to a mid-tier model
-- **Exit:** cache hit rate tracked and stable; the in-house memory eval has a baseline and is gated in CI.
+- Define a provider-independent memory adapter and tool contracts for remember, search, correction,
+  forget and conversation search. Mimir owns authorization, user/agent scopes, provenance, secret
+  filtering and timeouts; the selected system supplies durable memory, extraction and retrieval.
+- Prepare export/migration of existing facts and a shared, de-identified evaluation dataset. Include
+  short and long chats, multiple sessions, relevant facts among noise, corrections and changing facts.
+  Record current behavior as a transition reference, not a candidate custom memory engine.
+- Document latency budgets and quality thresholds before comparison runs. Prepare integration hooks
+  and observability without choosing a backend or expanding the existing custom memory engine.
+- **Exit:** context/cache behavior is stable; the adapter contract, migration inputs, fixtures and
+  measurement protocol are ready for the late-stage comparison in Phase 7.
 
-### Phase 6 — Hardening and launch
+### Phase 6 — Hardening and staging readiness
 
 From the old plan's Phases 14–15:
 
@@ -211,11 +224,48 @@ From the old plan's Phases 14–15:
 - Error-handling audit
 - Grafana alerts to Slack
 
-**Exit:** `staging` holds under concurrent multi-user load; promote to `main`.
+**Exit:** Mimir's chat, tools, background agents and delivery hold under concurrent multi-user load
+in staging, with budgets and observability ready. This completes the application prerequisites for
+memory trials; final production promotion follows Phase 7.
 
-After Phase 6, build the backlog in [docs/post-harness-features.md](docs/post-harness-features.md).
-Phases 1–5 leave hooks for all of it: tool risk tiers, the `uiContext` bridge, agent definitions as data,
-and memory scope.
+### Phase 7 — Memory system evaluation, report and adoption
+
+- Start only after Phases 4–6 and their completion gates are satisfied. Follow the shared
+  [memory evaluation protocol](docs/memory-evaluation-plan.md).
+- Run **Mem0, Letta, Cognee, Supermemory and Graphiti** through Mimir's prepared integration path,
+  using actual model inference and the same transcripts, questions and expected facts. Record exact
+  versions, deployment modes, models, configuration, hardware where applicable, and costs.
+- Measure ingestion and retrieval latency (p50/p95), time until new facts are searchable and added
+  chat latency. Evaluate recall across increasing chat lengths and sessions, temporal corrections,
+  relevant fact extraction precision/recall and invented or irrelevant facts.
+- Compare operational fit too: user isolation, deletion/export, source attribution, failure handling,
+  hosting/licensing requirements and cost. Mark unavailable or incomplete runs explicitly; vendor
+  claims and skipped runs cannot substitute for experiments.
+- After all five evaluations finish, publish `docs/research/memory-systems-evaluation.md` with raw
+  evidence, results, limitations, tradeoffs and a recommendation. Publish runs through the existing
+  immutable `eval/...` workflow. Selection follows this report; it is not predetermined.
+- Integrate the selected existing system, migrate retained facts, and rerun the memory and harness
+  gates through the final Mimir path. Gate its quality and latency in CI, then verify staging and
+  promote through the normal release process. Do not build a replacement custom engine if trials
+  disappoint; report the gap and reassess available systems/configurations.
+- **Exit:** all five have completed evaluations, the comparison report is published, the chosen system
+  works through Mimir with passing migration, isolation, quality and latency checks, and required CI
+  and staging checks pass before production promotion.
+
+### Phase 8 — SEO (final phase)
+
+- Start after Phase 7 and its completion gate. Keep SEO as the final planned phase.
+- Review the [SEO reference saved by the user](https://x.com/illyism/status/2123675279210242167)
+  and turn the applicable recommendations into an implementation checklist for Mimir's public pages.
+  The link is saved for later review; its contents have not been verified yet.
+- Audit public-page metadata, canonical URLs, sitemap/robots rules, structured data where applicable,
+  crawlability and page performance. Keep private chats and authenticated user content out of indexing.
+- **Exit:** applicable SEO work is implemented, reviewed and validated on the deployed public pages,
+  with results recorded and required CI passing. Ranking changes are measured after launch.
+
+After Phase 8, build the backlog in [docs/post-harness-features.md](docs/post-harness-features.md).
+Phases 1–7 leave hooks for all of it: tool risk tiers, the `uiContext` bridge, agent definitions as data,
+and memory scope through the selected provider.
 
 ## Testing
 
@@ -226,6 +276,7 @@ and memory scope.
 | Lint / typecheck / build       | ESLint, `tsc`, `turbo build`                                           | Every PR and push                                                                   |
 | Harness scenarios              | `evals/harness` runner, deterministic scoring; LLM judge only for tone | PRs touching the harness (Phase 0 onward); results published to `eval/...` branches |
 | Memory retrieval gate          | `scripts/eval-retrieval.ts`                                            | Every PR when the `OPENROUTER_API_KEY` secret is set                                |
+| Memory system comparison       | Shared `memory-systems` suite, added to the eval runner in Phase 7     | All five candidates after staging readiness; selected provider gated after adoption |
 | Red-team / injection           | `apps/worker/src/redteam.ts`                                           | Phase 3 onward, as an eval suite                                                    |
 | Crash injection                | kill the worker mid-tool and resume                                    | Phase 3 onward                                                                      |
 | Real-LLM end-to-end            | tests that skip without `OPENROUTER_API_KEY`                           | Eval runs and staging                                                               |
@@ -257,7 +308,8 @@ Details and day-to-day rules are in [AGENTS.md](AGENTS.md).
 - **Package supply chain:** follow the rules in the [pi package survey](docs/research/pi-packages.md#rules-for-third-party-pi-packages).
 - **Multi-tenant packages:** many packages read config from files; such packages need config injected
   per session, or a fork.
-- **Memory quality:** an independent 2026 study put flat-fact + pgvector memory ~35 points below
-  long-context recall; Phase 5 adds raw conversation search and validity dates for that reason.
+- **Memory selection:** Mem0, Letta, Cognee, Supermemory and Graphiti remain candidates until the
+  Phase 7 comparison report. Long-chat recall, fact relevance and latency must be measured on the
+  same Mimir workload. Access, hosting and model differences must be recorded rather than hidden.
 - **Render environments:** separate staging services and deploy hooks must be created by hand
   (see AGENTS.md → Deployments).

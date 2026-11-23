@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   AgentSession,
   SessionEntry,
@@ -15,7 +15,7 @@ import {
   HARNESS_LEGACY_HISTORY_LIMIT,
   HARNESS_TURN_TIMEOUT_MS,
   rollDailyUsage,
-  searchActiveFactsWithRelations,
+  memoryGateway,
   trackEvent,
   trackModelCall,
   type FactHit,
@@ -288,11 +288,29 @@ async function runConversation(
   ]);
   let facts: FactHit[] = [];
   if (messageCount >= HARNESS_FACTS_MIN_MESSAGES) {
-    facts = await searchActiveFactsWithRelations(conversationId, content).catch(
-      (e) => {
-        log.warn({ err: e }, "fact retrieval failed; continuing without facts");
-        return [];
-      },
+    facts = await Promise.all(
+      (["conversation", "user"] as const).map((scope) =>
+        memoryGateway()
+          .search({ userId, conversationId }, scope, content)
+          .catch((e) => {
+            log.warn(
+              { err: e },
+              "memory retrieval failed; continuing without this scope",
+            );
+            return [];
+          }),
+      ),
+    ).then((groups) =>
+      groups
+        .flat()
+        .slice(0, 12)
+        .map((r) => ({
+          id: r.id,
+          subject: r.subject,
+          fact: r.fact,
+          similarity: 0,
+          sources: [memoryGateway().provider.id],
+        })),
     );
   }
 
@@ -335,6 +353,7 @@ async function runConversation(
     ambient,
     pendingApproval: false,
     tainted:
+      facts.length > 0 ||
       rows.some((r) => JSON.stringify(r.data).includes("<untrusted_content")) ||
       inputs.some((i) => i.kind === "agent_result" || i.kind === "event"),
     allowedDomains: visibleDomains(
@@ -400,6 +419,12 @@ async function runConversation(
     session = await sessions.open(conversationId, {
       entries: rows.map((r) => r.data as unknown as SessionEntry),
       history,
+      onCompactionUsage: (u) => {
+        usage.promptTokens += u.input;
+        usage.completionTokens += u.output;
+        usage.costUsd += u.cost.total;
+      },
+      profileContext: JSON.stringify({ timezone: user?.timezone ?? "UTC" }),
       specs,
       ctx: { userId, conversationId, runId, safety, assertOwned },
       runtimeContext: () =>
@@ -518,6 +543,7 @@ async function runConversation(
         }).catch(() => {});
       }
     }
+    if (event.type === "compaction_end") persistNew();
     if (event.type === "message_end") {
       persistNew();
       const m = event.message as {
@@ -548,6 +574,15 @@ async function runConversation(
         void trackModelCall({
           userId,
           useCase: "interaction",
+          systemPromptHash: createHash("sha256")
+            .update(session.systemPrompt)
+            .digest("hex"),
+          injectedBlocks: [
+            {
+              type: "memory:" + memoryGateway().provider.id,
+              refIds: facts.map((f) => f.id),
+            },
+          ],
           result: {
             content: "",
             model: m.model ?? "unknown",

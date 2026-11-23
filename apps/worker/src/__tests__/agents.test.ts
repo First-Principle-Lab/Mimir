@@ -266,11 +266,11 @@ test("a background agent only reads, proposes writes and has its result posted b
     "message_agent",
   ])
     expect(tools).not.toContain(forbidden);
-  expect(textOf(seen[0]!.messages.at(-1)!)).toContain(
+  expect(seen[0]!.messages.map(textOf).join("\n")).toContain(
     "Objective: Find the invoice and reply",
   );
   // The runtime, not the brief, decides that proposing is always allowed.
-  expect(textOf(seen[0]!.messages.at(-1)!)).toContain(
+  expect(seen[0]!.messages.map(textOf).join("\n")).toContain(
     "Runtime note: propose_action is always allowed",
   );
   const done = await prisma.agentRun.findUniqueOrThrow({ where: { id: run.id } });
@@ -320,7 +320,7 @@ test("delegation runs a depth-2 leaf in-turn; leaves can't delegate and fan-out 
   const childTools = toolNames(seen[1]!);
   expect(childTools).toContain("propose_action");
   expect(childTools).not.toContain("delegate");
-  expect(textOf(seen[1]!.messages.at(-1)!)).toContain("Objective: Look up A");
+  expect(seen[1]!.messages.map(textOf).join("\n")).toContain("Objective: Look up A");
   expect(JSON.stringify(seen[2]!.messages)).toContain("A is 1.");
   const [child] = await prisma.agentRun.findMany({
     where: { parentRunId: run.id },
@@ -733,7 +733,7 @@ test("a retried agent keeps earlier corrections and closes helpers orphaned by t
   });
   faux.setResponses([reply([fauxText("Q3 summary without the appendix.")])]);
   await runAgentJob(job(run.id));
-  const opening = textOf(seen[0]!.messages.at(-1)!);
+  const opening = seen[0]!.messages.map(textOf).join("\n");
   expect(opening).toContain("Use the Q3 numbers");
   expect(opening).toContain("Skip the appendix");
   expect(

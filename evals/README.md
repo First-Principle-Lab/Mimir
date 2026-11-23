@@ -49,3 +49,10 @@ git show origin/eval/2026-11-23-retrieval-nightly:evals/runs/   # list the run d
 | `harness` | `scripts/eval-harness.ts` — live interaction model, synthetic read tools, deterministic scenario scoring | local Postgres/pgvector, Redis, `JWT_SECRET`, `OPENROUTER_API_KEY` |
 
 Never merge, rebase or delete `eval/*` branches; they are the record.
+
+The `memory` suite (`bun run eval-memory`) exercises the provider boundary,
+real-inference context compaction and the transition memory reference. Its frozen
+protocol and de-identified workload are in [memory/README.md](memory/README.md).
+It requires local Postgres/Redis and the OpenRouter key. It records measured
+baseline failures without claiming an external provider comparison; the five
+candidate trials remain Phase 7 work.

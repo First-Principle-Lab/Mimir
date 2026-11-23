@@ -64,7 +64,12 @@ Build: `Vault` (encrypted per-user secrets, referenced by handle in tool calls, 
 
 Mimir today: `ExtractedFact` rows (pgvector, supersede-on-conflict, relation graph) — but no way for the user to see, correct, or delete them.
 
-Build: `remember` / `forget` / `list_memories` tools in the harness; a settings view of facts; mark facts as `scope: global|agent`; "work log" entries per agent; memory-rule → approval-rule promotion.
+Build: `remember` / `forget` / `list_memories` tools and a settings view through the
+selected memory provider's adapter; global/agent scopes; "work log" entries per
+agent; memory-rule → approval-rule promotion. The backend is chosen by the
+[Phase 7 comparison](../plan.md#phase-7--memory-system-evaluation-report-and-adoption)
+after Mimir is ready, following the [evaluation protocol](memory-evaluation-plan.md).
+These user-facing features do not require a new custom memory engine.
 
 ## 4. Skills library (P2)
 

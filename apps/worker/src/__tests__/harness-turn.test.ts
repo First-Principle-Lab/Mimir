@@ -321,16 +321,16 @@ describe("runTurn", () => {
     ).toBeGreaterThan(0);
 
     // The model saw the static persona (pi sends it as system-message sections)
-    // plus the runtime context right before the message.
+    // plus the volatile runtime tail after the recent messages.
     const system = seen[0]!.messages[0]!;
     expect(system.role).toBe("system");
     expect(system.sections?.preamble).toContain("You are Mimir");
     const texts = seen[0]!.messages
       .filter((m) => m.role === "user")
       .map(textOf);
-    expect(texts.at(-2)).toContain("<runtime_context>");
-    expect(texts.at(-2)).toContain("Asia/Kolkata");
-    expect(texts.at(-1)).toBe("hi, my favourite colour is teal");
+    expect(texts.at(-1)).toContain("<runtime_context>");
+    expect(texts.at(-1)).toContain("Asia/Kolkata");
+    expect(texts.at(-2)).toBe("hi, my favourite colour is teal");
     expect(seen[0]!.messages.map(textOf).join("\n")).toContain(
       "My old project is Cedar.",
     );
@@ -1034,4 +1034,59 @@ describe("repliesByInput", () => {
     expect(repliesByInput([user("a"), assistant("")], 0, 1)).toEqual([""]);
     expect(repliesByInput([], 0, 2)).toEqual(["", ""]);
   });
+});
+
+test("zero-usage legacy history compacts through pi and reloads its checkpoint", async () => {
+  const history = Array.from({ length: 80 }, (_, i) => ({
+    role: i % 2 ? "assistant" : "user",
+    content: "Transient example. ".repeat(30),
+    createdAt: new Date(i + 1),
+  }));
+  history[0]!.content = "Preserve exact project code COMET-482.";
+  faux.setResponses([
+    reply([
+      fauxText(
+        "The user needs project code COMET-482. Other exercises are transient.",
+      ),
+    ]),
+    reply([fauxText("COMET-482")]),
+    reply([fauxText("COMET-482")]),
+  ]);
+  let session = await openSession({
+    entries: [],
+    history,
+    specs: [],
+    ctx: { userId, conversationId },
+    contextWindow: 4096,
+    systemPrompt: "Answer using the supplied project details.",
+    runtimeContext: () => "Synthetic runtime tail",
+  });
+  try {
+    await session.prompt("What project code did I give?");
+    await session.waitForIdle();
+    const entries = session.sessionManager.getEntries();
+    expect(entries.filter((e) => e.type === "compaction")).toHaveLength(1);
+    expect(entries.filter((e) => e.type === "message").length).toBeGreaterThan(
+      80,
+    );
+    session.dispose();
+    session = await openSession({
+      entries,
+      specs: [],
+      ctx: { userId, conversationId },
+      contextWindow: 4096,
+    systemPrompt: "Answer using the supplied project details.",
+      runtimeContext: () => "A new runtime tail",
+    });
+    await session.prompt("Repeat that code.");
+    await session.waitForIdle();
+    expect(JSON.stringify(session.messages)).toContain("COMET-482");
+    expect(
+      session.sessionManager
+        .getEntries()
+        .filter((e) => e.type === "compaction"),
+    ).toHaveLength(1);
+  } finally {
+    session.dispose();
+  }
 });

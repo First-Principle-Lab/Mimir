@@ -61,6 +61,7 @@ model Conversation {
   deliveries     Delivery[]
   routines       Routine[]
   emailDrafts    EmailDraft[]
+  toolArtifacts  ToolArtifact[]
 
   @@index([userId])
 }
@@ -110,6 +111,8 @@ model ExtractedFact {
   embedding      Unsupported("vector(1536)")? // raw $executeRaw access only (mirrors Agent.embedding)
   factSearch     Unsupported("tsvector")? // generated to_tsvector('english', subject || ' ' || fact); raw SQL only (see migration)
   status         String   @default("active") // active | superseded | deleted
+  memoryScope    String   @default("conversation")
+  memoryAgentId  String?
   // open string sets (no PG enum), typed at call sites
   subjectType    String   @default("other") // person | project | preference | date | credential | other
   factType       String   @default("attribute") // attribute | event | relationship | instruction
@@ -128,6 +131,22 @@ model ExtractedFact {
 
   @@index([conversationId, status])
   @@index([conversationId, subject])
+  @@index([userId, memoryScope, memoryAgentId])
+}
+
+// Full tool output is retained outside the model window. Reads require the
+// authenticated conversation owner; the original trust label travels with it.
+model ToolArtifact {
+  id             String @id
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  toolName       String
+  trust          String
+  content        String @db.Text
+  createdAt      DateTime @default(now())
+
+  @@index([conversationId, createdAt])
 }
 
 // Directed fact-to-fact edge (fact graph). `relationType` is a free text tag

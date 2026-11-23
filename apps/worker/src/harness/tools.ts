@@ -1,7 +1,6 @@
 import {
   getPrismaClient,
   HARNESS_TOOL_OUTPUT_MAX_CHARS,
-  searchActiveFactsWithRelations,
 } from "@mimir/backend-core";
 import {
   GITHUB_INTEGRATION,
@@ -24,6 +23,10 @@ import {
 import { gmailSearchTask } from "../integrations/gmail/gmail.js";
 import { notionSearchTask } from "../integrations/notion/notion.js";
 
+import { memoryReadTools } from "./memory-tools.js";
+import { artifactReadSpec } from "./tool-artifacts.js";
+export { memorySearchSpec } from "./memory-tools.js";
+
 const prisma = getPrismaClient();
 
 // Every capability the harness exposes is a ToolSpec, so gating, truncation,
@@ -43,6 +46,7 @@ export interface ToolRunContext {
   runId?: string;
   toolCallId?: string;
   signal?: AbortSignal;
+  memory?: { agentId: string; allowedScope: "conversation" | "user" | "agent" };
   assertOwned?: () => Promise<void>;
   safety?: {
     ambient: boolean;
@@ -130,38 +134,6 @@ export function taskToSpec(
   };
 }
 
-export const memorySearchSpec: ToolSpec = {
-  name: "memory_search",
-  label: "Search memory",
-  description:
-    "Search facts remembered from earlier in this conversation (people, preferences, plans, decisions). Use when the user refers to something from the past that isn't in the visible messages. Facts can be outdated.",
-  parameters: {
-    type: "object",
-    properties: {
-      query: {
-        type: "string",
-        description: "What to look for, in plain words",
-      },
-    },
-    required: ["query"],
-    additionalProperties: false,
-  },
-  risk: "read_private",
-  sideEffect: "none",
-  idempotent: true,
-  provenance: "mimir:memory",
-  outputMaxChars: HARNESS_TOOL_OUTPUT_MAX_CHARS,
-  resultTrust: "trusted",
-  execute: async (args, ctx) => {
-    const { query } = z.object({ query: z.string().min(1) }).parse(args);
-    const hits = await searchActiveFactsWithRelations(
-      ctx.conversationId,
-      query,
-    );
-    return { facts: hits.map((h) => ({ subject: h.subject, fact: h.fact })) };
-  },
-};
-
 const READ_PRIVATE = {
   risk: "read_private",
   sideEffect: "none",
@@ -172,7 +144,8 @@ const READ_PRIVATE = {
 // with the separate write and custom MCP registries behind the shared policy.
 export async function readToolsFor(userId: string): Promise<ToolSpec[]> {
   const specs: ToolSpec[] = [
-    memorySearchSpec,
+    ...memoryReadTools,
+    artifactReadSpec,
     taskToSpec(browserFetchTask(), {
       risk: "read_public",
       sideEffect: "none",

@@ -1,3 +1,4 @@
+import { agentMemoryScope } from "./memory-tools.js";
 import { randomUUID } from "node:crypto";
 import {
   AGENT_MAX_ACTIVE_PER_USER,
@@ -315,7 +316,8 @@ async function agentSpecs(
     (s) =>
       isReadOnly(s) &&
       (allowed.includes("*") || allowed.includes(s.name)) &&
-      (def.memoryScope !== "none" || s.name !== "memory_search"),
+      (def.memoryScope !== "none" ||
+        !["memory_search", "conversation_search"].includes(s.name)),
   );
   // Briefs and parent messages are model-written and may quote tool
   // content, so only the user's own messages vouch for a target.
@@ -340,8 +342,7 @@ function lastText(messages: unknown[]): string {
   const m = [...messages]
     .reverse()
     .find((x) => (x as { role?: string }).role === "assistant") as
-    | { content?: { type: string; text?: string }[] }
-    | undefined;
+    { content?: { type: string; text?: string }[] } | undefined;
   return (m?.content ?? [])
     .filter((c) => c.type === "text" && typeof c.text === "string")
     .map((c) => c.text)
@@ -353,9 +354,7 @@ function briefText(brief: Brief, def: Prisma.AgentDefinition): string {
   return [
     "<brief>",
     "Objective: " + brief.objective,
-    brief.success_criteria
-      ? "Success criteria: " + brief.success_criteria
-      : "",
+    brief.success_criteria ? "Success criteria: " + brief.success_criteria : "",
     brief.context ? "Context from the assistant: " + brief.context : "",
     brief.items?.length
       ? "Items, one helper each (delegate them all in one step):\n" +
@@ -437,12 +436,23 @@ export async function executeAgent(
         userId: run.userId,
         conversationId: run.conversationId,
         runId: run.id,
+        memory: agentMemoryScope(def.memoryScope, run.rootRunId ?? run.id),
         safety: {
           ambient: true,
           tainted: false,
           pendingApproval: false,
           allowedDomains: new Set(),
         },
+      },
+      onCompactionUsage: (u) => {
+        usage.steps += 1;
+        usage.promptTokens += u.input;
+        usage.completionTokens += u.output;
+        usage.costUsd += u.cost.total;
+        if (usage.steps >= def.maxSteps || usage.costUsd >= limitUsd) {
+          stop("budget_exceeded");
+          throw new Error("Agent compaction exhausted its budget");
+        }
       },
       modelId: config.model,
       generation: config,
@@ -651,7 +661,8 @@ export async function finalizeAgent(
           agentRunId: run.id,
           status: outcome.status,
           text: outcome.summary,
-          proposedActions: outcome.proposedActions as unknown as InputJsonValue[],
+          proposedActions:
+            outcome.proposedActions as unknown as InputJsonValue[],
         },
       },
       update: {},

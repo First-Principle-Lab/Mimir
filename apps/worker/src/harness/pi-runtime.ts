@@ -1,7 +1,13 @@
+import {
+  compactionSettings,
+  prepareSessionContext,
+  routingSessionId,
+} from "./context-policy.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  compact,
   createAgentSession,
   DefaultResourceLoader,
   ModelRuntime,
@@ -16,6 +22,7 @@ import {
   getConfig,
   interactionSystemPrompt,
   llmConfigFor,
+  trackModelCall,
 } from "@mimir/backend-core";
 import { mimirExtension, type MimirExtensionOptions } from "./extension.js";
 
@@ -59,7 +66,9 @@ export function interactionModelId(): string {
 // A background agent's definition names its model-config.json role
 // ("subagent" by default), so leaf workers can run on a cheaper model than
 // the interaction agent. Unknown roles fall back to the interaction model.
-export function agentConfig(role = "subagent"): ReturnType<typeof llmConfigFor> {
+export function agentConfig(
+  role = "subagent",
+): ReturnType<typeof llmConfigFor> {
   try {
     return llmConfigFor(role);
   } catch {
@@ -81,6 +90,11 @@ export interface OpenSessionOptions extends MimirExtensionOptions {
   uiContext?: ExtensionUIContext;
   // Defaults to the interaction agent's prompt and model settings.
   systemPrompt?: string;
+  onCompactionUsage?: (usage: {
+    input: number;
+    output: number;
+    cost: { total: number };
+  }) => void;
 }
 
 // Tests swap in pi's scripted faux provider so the whole harness runs in CI
@@ -99,7 +113,20 @@ export async function openSession(
 ): Promise<AgentSession> {
   const mr = modelOverride?.modelRuntime ?? (await modelRuntime());
   const modelId = opts.modelId ?? interactionModelId();
-  const model = modelOverride?.model ?? mr.getModel("openrouter", modelId);
+  const selected = modelOverride?.model ?? mr.getModel("openrouter", modelId);
+  const config =
+    opts.generation && "maxInputTokens" in opts.generation
+      ? (opts.generation as ReturnType<typeof llmConfigFor>)
+      : interactionConfig();
+  const model = selected
+    ? {
+        ...selected,
+        contextWindow: Math.min(
+          selected.contextWindow,
+          opts.contextWindow ?? config.maxInputTokens + config.maxOutputTokens,
+        ),
+      }
+    : undefined;
   if (!model) throw new ModelNotAvailableError(modelId);
 
   const systemPrompt = opts.systemPrompt ?? interactionSystemPrompt();
@@ -153,6 +180,45 @@ export async function openSession(
     extensionFactories: [
       mimirExtension({
         ...opts,
+        sessionManager,
+        summarize: async (event) => {
+          const started = performance.now();
+          const result = await compact(
+            event.preparation,
+            { ...selected!, maxTokens: Math.min(selected!.maxTokens, 4096) },
+            (await mr.getAuth(selected!))?.auth.apiKey,
+            undefined,
+            event.customInstructions ??
+              "Preserve user goals, corrections, exact identifiers, source references and unfinished work; retain the provenance of tool data.",
+            event.signal,
+            "off",
+            session.agent.streamFunction,
+            undefined,
+            undefined,
+            undefined,
+            routingSessionId(opts.ctx.userId, opts.ctx.conversationId),
+          );
+          if (result.usage) opts.onCompactionUsage?.(result.usage);
+          if (result.usage)
+            await trackModelCall({
+              userId: opts.ctx.userId,
+              useCase: "compaction",
+              result: {
+                content: "",
+                model: selected!.id,
+                latencyMs: performance.now() - started,
+                usage: {
+                  promptTokens: result.usage.input,
+                  completionTokens: result.usage.output,
+                  totalTokens: result.usage.totalTokens,
+                },
+                cachedTokens: result.usage.cacheRead,
+              },
+              costCents: Math.round(result.usage.cost.total * 100),
+            });
+          return result;
+        },
+        contextWindow: model.contextWindow,
         generation: opts.generation ?? interactionConfig(),
       }),
     ],
@@ -166,9 +232,9 @@ export async function openSession(
     thinkingLevel: "off",
     modelRuntime: mr,
     resourceLoader,
-    // Compaction stays off until Phase 5 designs it around the prompt cache.
+    // Native pi checkpoints preserve original entries and survive hydration.
     settingsManager: SettingsManager.inMemory({
-      compaction: { enabled: false },
+      compaction: compactionSettings(model.contextWindow),
       retry: { enabled: true, maxRetries: 2 },
     }),
     sessionManager,
@@ -179,5 +245,10 @@ export async function openSession(
     ...opts.specs.filter((s) => !s.deferred).map((s) => s.name),
     "tool_search",
   ]);
+  const prompt = session.prompt.bind(session);
+  session.prompt = async (text, options) => {
+    await prepareSessionContext(session, model.contextWindow, text);
+    return prompt(text, options);
+  };
   return session;
 }

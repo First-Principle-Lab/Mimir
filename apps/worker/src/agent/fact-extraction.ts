@@ -1,4 +1,5 @@
 import {
+  containsSecret,
   getLogger,
   getPrismaClient,
   loadPrompt,
@@ -7,7 +8,6 @@ import {
   trackModelCall,
 } from "@mimir/backend-core";
 import type { ChatResult, LlmMessage } from "@mimir/shared-types";
-
 
 export {
   searchActiveFacts,
@@ -311,7 +311,9 @@ export async function extractFacts(
     result: extracted,
   });
 
-  const facts = parseExtractedFacts(extracted.content);
+  const facts = parseExtractedFacts(extracted.content).filter(
+    (f) => !containsSecret(f.subject + " " + f.fact),
+  );
   if (facts.length === 0) return { inserted: 0, superseded: 0 };
 
   let inserted = 0;
@@ -346,7 +348,7 @@ export async function extractFacts(
         { id: string; subject: string; fact: string; similarity: number }[]
       >`SELECT id, subject, fact, 1 - (embedding <=> ${vecLiteral}::vector) AS similarity
          FROM "ExtractedFact"
-         WHERE status = 'active' AND "conversationId" = ${conversationId} AND embedding IS NOT NULL
+         WHERE status = 'active' AND "memoryScope" = 'conversation' AND "memoryAgentId" IS NULL AND "conversationId" = ${conversationId} AND embedding IS NOT NULL
          ORDER BY embedding <=> ${vecLiteral}::vector
          LIMIT ${SUPERSEDE_CANDIDATE_K}`;
     } catch (e) {
@@ -380,7 +382,12 @@ export async function extractFacts(
   const dupKeys = new Set<string>();
   try {
     const existing = await prisma.extractedFact.findMany({
-      where: { conversationId, status: "active" },
+      where: {
+        conversationId,
+        status: "active",
+        memoryScope: "conversation",
+        memoryAgentId: null,
+      },
       select: { subject: true, fact: true },
     });
     for (const e of existing) dupKeys.add(`${e.subject}\u0000${e.fact}`);

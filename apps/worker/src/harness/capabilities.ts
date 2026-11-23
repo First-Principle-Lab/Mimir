@@ -1,3 +1,4 @@
+import { memoryWriteTools } from "./memory-tools.js";
 import { readToolsFor } from "./tools.js";
 import { writeToolsFor } from "./write-tools.js";
 import { mcpToolsFor } from "./mcp-tools.js";
@@ -7,5 +8,5 @@ export async function toolsFor(userId: string) {
     writeToolsFor(userId),
     mcpToolsFor(userId),
   ]);
-  return groups.flat();
+  return [...groups.flat(), ...memoryWriteTools];
 }
