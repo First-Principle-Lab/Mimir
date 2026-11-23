@@ -268,7 +268,12 @@ export async function extractFacts(
   let raw;
   try {
     raw = await prisma.message.findMany({
-      where: { conversationId, createdAt: { gt: from, lte: to } },
+      where: {
+        conversationId,
+        createdAt: { gt: from, lte: to },
+        role: { in: ["user", "assistant"] },
+        status: "complete",
+      },
       orderBy: { createdAt: "asc" },
       select: { id: true, role: true, content: true },
     });
@@ -279,6 +284,7 @@ export async function extractFacts(
     );
     return { inserted: 0, superseded: 0 };
   }
+  raw = raw.filter((m) => !containsSecret(m.content));
   if (raw.length === 0) return { inserted: 0, superseded: 0 };
 
   const text = raw.map((m) => `[${m.role}] ${m.content}`).join("\n");

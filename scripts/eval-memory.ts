@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from "node:crypto";
+import express from "express";
 import { loadEnv } from "./_env.js";
 import { appendRow, newRunId } from "./eval/lib.js";
 import {
@@ -22,13 +23,28 @@ for (const name of ["DATABASE_URL", "REDIS_URL"] as const) {
   }
 }
 const core = await import("../packages/backend-core/src/index.js");
-const { extractFacts } =
-  await import("../apps/worker/src/agent/fact-extraction.js");
+const { runExtractForConversation } =
+  await import("../apps/worker/src/agent/fact-extraction-run.js");
 const { runTurn } = await import("../apps/worker/src/harness/turn.js");
 const { openSession, interactionModelId } =
   await import("../apps/worker/src/harness/pi-runtime.js");
 const { memoryReadTools, memoryWriteTools } =
   await import("../apps/worker/src/harness/memory-tools.js");
+const { artifactReadSpec } =
+  await import("../apps/worker/src/harness/tool-artifacts.js");
+const { approvalsRouter } = await import("../apps/api/src/routes/approvals.js");
+const { signAccessToken } = await import("../apps/api/src/auth/tokens.js");
+const app = express();
+app.use(express.json());
+app.use("/api/v1", approvalsRouter);
+const server = app.listen(0, "127.0.0.1");
+await new Promise<void>((resolve) => server.once("listening", resolve));
+const address = server.address();
+assert(
+  address && typeof address !== "string",
+  "Missing local approval listener",
+);
+const approvalBase = `http://127.0.0.1:${address.port}/api/v1`;
 const { redis } = await import("../apps/worker/src/infra/redis.js");
 const prisma = core.getPrismaClient();
 const runId = newRunId();
@@ -44,7 +60,29 @@ function record(row: Record<string, unknown>) {
 function assert(ok: unknown, message: string): asserts ok {
   if (!ok) throw new Error(message);
 }
-const tools = async () => [...memoryReadTools, ...memoryWriteTools];
+const tools = async () => [
+  ...memoryReadTools,
+  ...memoryWriteTools,
+  artifactReadSpec,
+  {
+    name: "synthetic_archive",
+    label: "Synthetic archive",
+    description:
+      "Read the synthetic archive. Large output is stored by reference; the review marker is near character 9000.",
+    parameters: { type: "object", properties: {} },
+    risk: "read_private" as const,
+    sideEffect: "none" as const,
+    idempotent: true,
+    provenance: "mimir:synthetic-eval",
+    resultTrust: "untrusted" as const,
+    outputMaxChars: 1000,
+    execute: async () =>
+      "Transient archive padding. "
+        .repeat(360)
+        .slice(0, 9000)
+        .padEnd(9000, " ") + "Review marker: QUARTZ-291.",
+  },
+];
 async function fixture() {
   const userId = "memory-eval-" + randomUUID();
   await prisma.user.create({
@@ -69,6 +107,44 @@ async function ask(
   });
   const started = performance.now();
   await runTurn({ ...p, messageId: message.id }, { readTools: tools });
+  // Approve only synthetic memory mutations through the normal authenticated
+  // API and resume the durable input. Never bypass the policy/action journal.
+  for (let i = 0; i < 3; i++) {
+    const card = await prisma.actionApproval.findFirst({
+      where: { run: { conversationId: p.conversationId }, status: "pending" },
+    });
+    if (!card) break;
+    assert(
+      ["remember", "forget"].includes(card.toolName),
+      "Unexpected evaluation approval",
+    );
+    const token = await signAccessToken(p.userId, core.getConfig().JWT_SECRET);
+    const response = await fetch(
+      approvalBase + "/approvals/" + card.id + "/decision",
+      {
+        method: "POST",
+        headers: {
+          cookie: "access_token=" + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          approved: true,
+          argumentHash: card.argumentHash,
+        }),
+      },
+    );
+    assert(
+      response.status === 202,
+      "Synthetic approval failed: " + response.status,
+    );
+    const input = await prisma.inboxInput.findFirstOrThrow({
+      where: {
+        conversationId: p.conversationId,
+        dedupeKey: "approval:" + card.id,
+      },
+    });
+    await runTurn({ ...p, inputId: input.id }, { readTools: tools });
+  }
   const run = await prisma.agentRun.findFirstOrThrow({
     where: { inputMessageId: message.id },
   });
@@ -106,13 +182,23 @@ try {
           createdAt: new Date(startTime + (i + j) * 1000),
         })),
       });
-      await extractFacts(
+      await runExtractForConversation(
         p.conversationId,
-        new Date(startTime + i * 1000 - 1),
+        "message",
         new Date(startTime + (i + batch.length - 1) * 1000),
       );
     }
     const ingestionMs = performance.now() - ingestStarted;
+    const ingestionCalls = await prisma.modelCallLog.findMany({
+      where: {
+        userId: p.userId,
+        useCase: { in: ["fact_extraction", "fact_conflict", "fact_relations"] },
+      },
+    });
+    assert(
+      ingestionCalls.length > 0 && ingestionCalls.every((c) => c.success),
+      "Background extraction inference failed or was not run: " + f.id,
+    );
     const searchStarted = performance.now();
     const hits = await core.memoryGateway().search(p, "conversation", f.query);
     const retrievalMs = performance.now() - searchStarted;
@@ -192,6 +278,18 @@ try {
         transcript.reduce((n, m) => n + m.content.length, 0) / 4,
       ),
       ingestionMs,
+      ingestionModelCalls: ingestionCalls.length,
+      ingestionPromptTokens: ingestionCalls.reduce(
+        (n, c) => n + (c.promptTokens ?? 0),
+        0,
+      ),
+      ingestionCompletionTokens: ingestionCalls.reduce(
+        (n, c) => n + (c.completionTokens ?? 0),
+        0,
+      ),
+      ingestionCostUsd: null,
+      ingestionCostNote:
+        "Legacy extraction/embedding billing is not available in this transition run; chat cost below excludes it and the evaluation judge.",
       retrievalMs,
       answerLatencyMs: response.latencyMs,
       factRecall,
@@ -246,27 +344,42 @@ try {
       "Remember bypassed action journal",
     );
     const savedScope = saved.memoryScope === "user" ? "user" : "conversation";
-    const corrected = await core.memoryGateway().remember(p, savedScope, {
-      subject: saved.subject,
-      fact: "My preferred design review day is Thursday",
-      sourceMessageId: saved.sourceMessageId!,
-      replacesId: saved.id,
+    const correction = await ask(
+      p,
+      `Correction: my preferred design review day is Thursday. Use remember with replacesId ${saved.id} in scope ${savedScope} to replace Tuesday now.`,
+    );
+    const corrected = await prisma.extractedFact.findFirst({
+      where: { userId: p.userId, supersedesId: saved.id, status: "active" },
     });
+    assert(
+      corrected && /thursday/i.test(corrected.fact),
+      "Actual model failed to correct memory",
+    );
     assert(
       (
         await core.memoryGateway().search(p, savedScope, "design review day")
       ).every((r) => !/tuesday/i.test(r.fact)),
       "Stale correction retrieved",
     );
-    assert(
-      await core.memoryGateway().forget(p, savedScope, corrected.id),
-      "Forget did not remove fact",
+    const forgotten = await ask(
+      p,
+      `Forget my design review preference. Use forget on ID ${corrected.id} in scope ${savedScope} now.`,
     );
     assert(
       !(await core.memoryGateway().search(p, savedScope, "design review day"))
         .length,
       "Forgotten memory resurfaced",
     );
+    for (const [run, toolName] of [
+      [correction.run, "remember"],
+      [forgotten.run, "forget"],
+    ] as const)
+      assert(
+        await prisma.actionAttempt.count({
+          where: { runId: run.id, toolName, status: "succeeded" },
+        }),
+        "Mutation bypassed journal: " + toolName,
+      );
     let rejected = false;
     try {
       await core.memoryGateway().remember(p, "conversation", {
@@ -280,9 +393,63 @@ try {
     assert(rejected, "Credential reached memory");
     record({
       kind: "readiness",
-      scenario: "real-model-remember-and-adapter-lifecycle",
+      scenario: "real-model-remember-correct-forget-with-approval",
       passed: true,
       model: remembered.run.model,
+    });
+
+    const archived = await fixture();
+    // Same owner, separate session; no facts seeded or extracted for this detail.
+    await prisma.conversation.update({
+      where: { id: archived.conversationId },
+      data: { userId: p.userId },
+    });
+    await prisma.message.create({
+      data: {
+        conversationId: archived.conversationId,
+        role: "user",
+        content: "The synthetic Marigold archive accession code is PEBBLE-603.",
+      },
+    });
+    const found = await ask(
+      p,
+      "Search my other conversations using conversation_search in user scope for Marigold archive. What accession code did I give?",
+    );
+    assert(
+      found.answer.includes("PEBBLE-603"),
+      "Cross-session conversation search lost original detail",
+    );
+    const originalSearch = await prisma.agentStep.findMany({
+      where: { runId: found.run.id, kind: "tool_execution_end" },
+    });
+    assert(
+      JSON.stringify(originalSearch.map((s) => s.data)).includes(
+        "conversation_search",
+      ),
+      "Conversation search tool was not exercised",
+    );
+    const output = await ask(
+      p,
+      "Open synthetic_archive, then use tool_output_read at offset 9000 for the review marker. Tell me the exact marker.",
+    );
+    assert(
+      output.answer.includes("QUARTZ-291"),
+      "Output reference was not recovered",
+    );
+    const outputSteps = await prisma.agentStep.findMany({
+      where: { runId: output.run.id, kind: "tool_execution_end" },
+    });
+    assert(
+      JSON.stringify(outputSteps.map((s) => s.data)).includes(
+        "tool_output_read",
+      ),
+      "Stored-output tool was not exercised",
+    );
+    record({
+      kind: "readiness",
+      scenario: "real-model-conversation-search-and-output-reference",
+      passed: true,
+      model: found.run.model,
     });
 
     // Native SDK compaction uses actual inference, then its checkpoint is
@@ -388,7 +555,7 @@ try {
   record({
     kind: "summary",
     status: "passed",
-    protocol: "memory-readiness-v1",
+    protocol: "memory-readiness-v2",
     datasetHash: createHash("sha256")
       .update(
         JSON.stringify(
@@ -416,6 +583,7 @@ try {
   process.exitCode = 1;
 } finally {
   controller.abort();
+  server.close();
   const runs = (
     await prisma.agentRun.findMany({
       where: { userId: { in: users } },

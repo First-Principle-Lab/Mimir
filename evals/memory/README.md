@@ -1,6 +1,10 @@
-# Memory readiness protocol (v1)
+# Memory readiness protocol (v2)
 
-Frozen before the first Phase 5 run. This is the transition reference and adapter
+Version 2 freezes the final Phase 5 readiness run. Version 1 exposed a
+compaction response-tracking failure; its immutable failed run is retained.
+Version 2 strengthens live correction/forget, cross-session search and stored-output
+checks and dispatches transcript batches through the background extraction entry
+point. The six fixtures and annotations are unchanged; no held-out tuning occurred. This is the transition reference and adapter
 readiness gate. It does not select or rank external providers. Phase 7 runs all
 five candidates after the staging prerequisites in plan.md.
 

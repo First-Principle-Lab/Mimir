@@ -1,4 +1,10 @@
-import { getConfig, getLogger, getPrismaClient } from "@mimir/backend-core";
+import {
+  getConfig,
+  getLogger,
+  getPrismaClient,
+  memoryGateway,
+  LegacyMemoryProvider,
+} from "@mimir/backend-core";
 import { extractFacts } from "./fact-extraction.js";
 
 const prisma = getPrismaClient();
@@ -55,9 +61,22 @@ export async function runExtractForConversation(
     return null;
   }
 
-  const res = await extractFacts(conversationId, from, actualWindowEnd, {
-    write: !darkLaunch,
+  const gateway = memoryGateway();
+  const owner = await prisma.conversation.findUniqueOrThrow({
+    where: { id: conversationId },
+    select: { userId: true },
   });
+  const res =
+    gateway.provider instanceof LegacyMemoryProvider
+      ? await extractFacts(conversationId, from, actualWindowEnd, {
+          write: !darkLaunch,
+        })
+      : await gateway.ingest(
+          { userId: owner.userId, conversationId },
+          from,
+          actualWindowEnd,
+          darkLaunch,
+        );
 
   if (!darkLaunch) {
     await prisma.conversation.updateMany({

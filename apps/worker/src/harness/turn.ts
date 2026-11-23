@@ -134,7 +134,7 @@ function assistantText(message: unknown): string {
     role?: string;
     content?: Array<{ type: string; text?: string }>;
   };
-  if (m.role !== "assistant" || !Array.isArray(m.content)) return "";
+  if (!m || m.role !== "assistant" || !Array.isArray(m.content)) return "";
   return m.content
     .filter((c) => c.type === "text" && typeof c.text === "string")
     .map((c) => c.text)
@@ -506,6 +506,9 @@ async function runConversation(
   // The provider's own error (auth, quota, invalid request), so a failed
   // model call isn't recorded as an empty reply.
   let modelError: string | undefined;
+  // Compaction replaces the active message array. Capture replies from this
+  // run's events instead of indexing into a mutable history snapshot.
+  let latestAssistant: unknown;
   session.subscribe((event) => {
     if (
       event.type === "message_end" ||
@@ -561,6 +564,7 @@ async function runConversation(
         };
       };
       if (m.role === "assistant") {
+        latestAssistant = event.message;
         lastStopReason = m.stopReason;
         if (m.stopReason === "error") {
           modelError = m.errorMessage ?? "model call failed";
@@ -603,7 +607,6 @@ async function runConversation(
     }
   });
 
-  const fromIndex = session.messages.length;
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
@@ -657,12 +660,7 @@ async function runConversation(
     await session.waitForIdle();
     await pumping;
     if (pumpError) throw pumpError;
-    const latestText = () =>
-      assistantText(
-        [...session.messages.slice(fromIndex)]
-          .reverse()
-          .find((m) => (m as { role?: string }).role === "assistant"),
-      );
+    const latestText = () => assistantText(latestAssistant);
     let text = latestText();
     if (
       !response.interrupted &&
@@ -704,10 +702,7 @@ async function runConversation(
 
   const durationMs = Date.now() - startedAt;
 
-  const text = [...session.messages.slice(fromIndex)]
-    .reverse()
-    .find((m) => (m as { role?: string }).role === "assistant");
-  const finalText = assistantText(text);
+  const finalText = assistantText(latestAssistant);
   const failed =
     !response.interrupted &&
     (!finalText ||

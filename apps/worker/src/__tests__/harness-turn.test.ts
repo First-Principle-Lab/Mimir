@@ -1036,6 +1036,63 @@ describe("repliesByInput", () => {
   });
 });
 
+test("runTurn delivers and journals its answer after pre-prompt compaction", async () => {
+  const c = await prisma.conversation.create({ data: { userId } });
+  try {
+    await prisma.message.createMany({
+      data: Array.from({ length: 48 }, (_, i) => ({
+        conversationId: c.id,
+        role: i % 2 ? "assistant" : "user",
+        content: "Transient exercise with no durable user details. ".repeat(
+          100,
+        ),
+        createdAt: new Date(Date.now() - (50 - i) * 1000),
+      })),
+    });
+    const message = await prisma.message.create({
+      data: {
+        conversationId: c.id,
+        role: "user",
+        content: "What is 17 + 25?",
+      },
+    });
+    faux.setResponses([
+      reply([
+        fauxText(
+          "Previous exercises are transient. Answer the current arithmetic question.",
+        ),
+      ]),
+      reply([fauxText("42")]),
+    ]);
+    await runTurn(
+      { userId, conversationId: c.id, messageId: message.id },
+      { readTools: async () => [] },
+    );
+    const run = await prisma.agentRun.findFirstOrThrow({
+      where: { inputMessageId: message.id },
+    });
+    expect(run.status).toBe("succeeded");
+    expect((await replyTo(message.id)).map((m) => m.content)).toEqual(["42"]);
+    expect(
+      await prisma.sessionEntry.count({
+        where: { conversationId: c.id, type: "compaction" },
+      }),
+    ).toBeGreaterThan(0);
+    expect(
+      await prisma.agentStep.count({
+        where: { runId: run.id, kind: "message_end" },
+      }),
+    ).toBeGreaterThan(0);
+  } finally {
+    await prisma.agentRun.deleteMany({ where: { conversationId: c.id } });
+    await prisma.outboxEvent.deleteMany({
+      where: { payload: { path: ["conversationId"], equals: c.id } },
+    });
+    await prisma.message.deleteMany({ where: { conversationId: c.id } });
+    await prisma.conversation.delete({ where: { id: c.id } });
+  }
+});
+
 test("zero-usage legacy history compacts through pi and reloads its checkpoint", async () => {
   const history = Array.from({ length: 80 }, (_, i) => ({
     role: i % 2 ? "assistant" : "user",
@@ -1075,7 +1132,7 @@ test("zero-usage legacy history compacts through pi and reloads its checkpoint",
       specs: [],
       ctx: { userId, conversationId },
       contextWindow: 4096,
-    systemPrompt: "Answer using the supplied project details.",
+      systemPrompt: "Answer using the supplied project details.",
       runtimeContext: () => "A new runtime tail",
     });
     await session.prompt("Repeat that code.");

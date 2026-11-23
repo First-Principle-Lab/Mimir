@@ -1,5 +1,6 @@
 import { getPrismaClient } from "./prisma.js";
 import { tracer } from "./observability.js";
+import { createHash } from "node:crypto";
 
 export type MemoryScope = "conversation" | "user" | "agent";
 export interface MemoryNamespace {
@@ -34,9 +35,28 @@ export interface ConversationHit {
   content: string;
   createdAt: string;
 }
+export interface MemoryTranscriptBatch {
+  // Stable across retries; the provider must deduplicate this key/source IDs.
+  idempotencyKey: string;
+  after: string;
+  through: string;
+  dryRun: boolean;
+  messages: ConversationHit[];
+}
+export interface MemoryIngestResult {
+  inserted: number;
+  superseded: number;
+}
 export interface MemoryProvider {
   readonly id: string;
   readonly version: string;
+  // Resolves only once ingestion/indexing is complete. Unsupported providers
+  // must fail rather than silently sending transcripts to legacy extraction.
+  ingest?(
+    ns: MemoryNamespace,
+    batch: MemoryTranscriptBatch,
+    signal: AbortSignal,
+  ): Promise<MemoryIngestResult>;
   search(
     ns: MemoryNamespace,
     query: string,
@@ -200,6 +220,7 @@ export class MemoryGateway {
     query: string,
     signal?: AbortSignal,
   ) {
+    assertMemorySafe(query);
     return this.call(
       p,
       scope,
@@ -238,6 +259,66 @@ export class MemoryGateway {
       signal,
     );
   }
+  ingest(
+    p: MemoryPrincipal,
+    after: Date,
+    through: Date,
+    dryRun = false,
+    signal?: AbortSignal,
+  ) {
+    return this.call(
+      p,
+      "conversation",
+      "ingest",
+      async (ns, s) => {
+        if (!this.provider.ingest)
+          throw new Error(
+            "Memory provider does not support transcript ingestion",
+          );
+        if (through <= after)
+          throw new Error("Invalid memory ingestion window");
+        const messages = await getPrismaClient().message.findMany({
+          where: {
+            conversationId: ns.conversationId,
+            conversation: { userId: ns.userId },
+            createdAt: { gt: after, lte: through },
+            role: { in: ["user", "assistant"] },
+            status: "complete",
+          },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        });
+        s.throwIfAborted();
+        const batch: MemoryTranscriptBatch = {
+          idempotencyKey: createHash("sha256")
+            .update(
+              JSON.stringify([
+                ns,
+                after.toISOString(),
+                through.toISOString(),
+                dryRun,
+              ]),
+            )
+            .digest("hex"),
+          after: after.toISOString(),
+          through: through.toISOString(),
+          dryRun,
+          messages: messages
+            .filter((m) => !containsSecret(m.content))
+            .map((m) => ({
+              id: m.id,
+              conversationId: m.conversationId,
+              role: m.role,
+              content: m.content,
+              createdAt: m.createdAt.toISOString(),
+            })),
+        };
+        const result = await this.provider.ingest(ns, batch, s);
+        s.throwIfAborted();
+        return result;
+      },
+      signal,
+    );
+  }
   forget(
     p: MemoryPrincipal,
     scope: MemoryScope,
@@ -258,6 +339,7 @@ export class MemoryGateway {
     query: string,
     signal?: AbortSignal,
   ) {
+    assertMemorySafe(query);
     return this.call(
       p,
       scope,

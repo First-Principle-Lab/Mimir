@@ -427,6 +427,18 @@ describe("deleteFact — soft delete, separate path from supersede", () => {
   });
 });
 
+test("credential messages are filtered before the extraction model", async () => {
+  const from = new Date();
+  const to = new Date(from.getTime() + 60_000);
+  await addMessages(["api_key=synthetic-canary-0123456789"], from, to);
+  let calls = 0;
+  const res = await extractFacts(conversationId, from, to, {
+    caller: async () => { calls++; return chat('{"facts":[]}'); }, embed,
+  });
+  expect(calls).toBe(0);
+  expect(res.inserted).toBe(0);
+});
+
 test("credential-shaped extracted facts never reach memory or embeddings", async () => {
   await clearFacts();
   const from = new Date(),

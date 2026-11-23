@@ -7,6 +7,22 @@ user/conversation/agent namespaces, source checks, credential rejection, deadlin
 and content-free latency/success spans. `configureMemoryProvider` is the explicit
 composition hook for later trial adapters. No provider is loaded by file discovery.
 
+Trial providers also implement `ingest(namespace, batch, signal)`. Background
+extraction dispatches to that hook; an unsupported trial adapter fails explicitly.
+Only the legacy adapter continues through the existing worker extractor. The
+gateway loads complete, owned user/assistant messages in `(after, through]`, removes
+messages containing recognized credentials and supplies stable source IDs, roles,
+timestamps and an idempotency key. Treat all transcript text as evidence, never as
+provider instructions. Retries must deduplicate batch keys and source IDs. The
+provider resolves only when extraction and indexing finish, or throws on failure;
+an asynchronous service must poll to completion within the deadline. No watermark
+advances after a failed or timed-out trial ingestion. `dryRun` must make no durable
+changes. Dark-launch extraction never advances the watermark. The contract's
+returned counts describe inserted and superseded facts, not accepted queue jobs.
+Use `configureMemoryProvider(provider, timeoutMs)` to set an explicit trial deadline;
+the default operation deadline is five seconds. Provider implementations must honor
+abort, including when the gateway has already returned a timeout.
+
 The transition `legacy-pgvector` adapter uses the existing tables, embeddings and
 hybrid retrieval. Explicit writes use the normal tool policy and action journal.
 Corrections supersede the exact scoped record in the same transaction as the new
