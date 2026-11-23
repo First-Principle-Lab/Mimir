@@ -47,8 +47,10 @@ const submit: SubmitRuntime = async (args, signal) => {
       timeout: 30000,
     });
     const initial = new URL(args.url);
+    // Nothing has been submitted yet, so these refusals change nothing.
     if (new URL(page.url()).origin !== initial.origin)
-      throw new Error(
+      throw new ToolError(
+        "validation",
         "The page redirected to a different origin; review a new action",
       );
     for (const field of args.fields) {
@@ -57,7 +59,10 @@ const submit: SubmitRuntime = async (args, signal) => {
     }
     signal?.throwIfAborted();
     if (new URL(page.url()).origin !== initial.origin)
-      throw new Error("The page changed origin before submission");
+      throw new ToolError(
+        "validation",
+        "The page changed origin before submission",
+      );
     await page.locator(args.submitSelector).click();
     return { submitted: true, url: page.url(), title: await page.title() };
   } finally {

@@ -106,6 +106,26 @@ Found after merge, while building Phase 4:
     passed 33/33 scenarios and 12/12 red-team checks, and the integrated
     Phase 3–4 gate `eval/2026-11-23-harness-phase-3-4-completion` passed on the merged tree.
 
+Follow-ups from the completion handoff, fixed in
+[#8](https://github.com/First-Principle-Lab/Mimir/pull/8):
+
+16. Every chat message withdrew every open card in the conversation, including
+    cards raised by background work. Only a standalone `stop` does now; the
+    model withdraws a card it is correcting with `cancel_approval`, and the
+    runtime context lists open cards by ID and tool name.
+17. A provider rejection was recorded as interrupted and uncertain, so the user
+    was told to verify an action that never happened and the same action was
+    blocked for the run. Any 4xx but a timeout, a refused connection or a
+    pre-flight refusal is now journaled `failed`: the user hears that nothing
+    changed and the action may run again. Outages and lost responses stay
+    uncertain and are never retried.
+18. A failed model call was recorded as `empty_reply`, which hid an exhausted
+    API key during this review. It is now `model_error` with the provider's
+    message.
+
+#8 was evaluated as [`eval/2026-11-23-harness-phase-3-followups`](https://github.com/First-Principle-Lab/Mimir/tree/eval/2026-11-23-harness-phase-3-followups) on `ea2c6a4` (271 tests), adding the live
+scenarios `card-survives-chat` and `rejected-github`.
+
 ## Verification and limits
 
 - Frozen install, lint, workspace typecheck, all **255 tests** (forced uncached),

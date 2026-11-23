@@ -442,6 +442,26 @@ describe("runTurn", () => {
     ).toMatchObject({ status: "failed" });
   });
 
+  test("a provider error is recorded as a model error with its message", async () => {
+    const failure = () =>
+      fauxAssistantMessage([], {
+        stopReason: "error",
+        errorMessage: "403 Key limit exceeded (total limit)",
+      });
+    faux.setResponses([failure, failure, failure, failure, failure, failure]);
+    const input = await userMessage("anything");
+    await runTurn({ conversationId, userId, messageId: input.id });
+    const run = await prisma.agentRun.findUniqueOrThrow({
+      where: { inputMessageId: input.id },
+    });
+    expect(run.status).toBe("failed");
+    expect(run.error).toMatchObject({
+      reason: "model_error",
+      message: expect.stringContaining("Key limit exceeded"),
+    });
+    faux.setResponses([]);
+  });
+
   test("a conversation locked by another process is retried, not run twice", async () => {
     const input = await userMessage("are you busy?");
     await redis.set(

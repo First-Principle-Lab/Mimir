@@ -1,4 +1,6 @@
 import { getPrismaClient } from "@mimir/backend-core";
+import { ToolError } from "@mimir/tasks";
+import { z } from "zod";
 import { argumentHash, executeJournaled } from "./actions.js";
 import { payloadOf, type Input } from "./inbox.js";
 import {
@@ -44,6 +46,8 @@ export async function resumeApproval(
       )
     );
   }
+  if (approval.status === "failed")
+    return "The provider rejected this action earlier, so nothing changed. It can be proposed again, corrected if needed.";
   if (approval.status !== "approved")
     return (
       "This approval is " +
@@ -101,13 +105,86 @@ export async function resumeApproval(
       renderToolResult(spec, result)
     );
   } catch (error) {
+    const attempt = await prisma.actionAttempt.findUnique({
+      where: {
+        runId_toolCallId: {
+          runId: approval.runId,
+          toolCallId: approval.toolCallId,
+        },
+      },
+    });
+    const rejected = attempt?.status === "failed";
     await prisma.actionApproval.update({
       where: { id: approval.id },
-      data: { status: "interrupted" },
+      data: { status: rejected ? "failed" : "interrupted" },
     });
+    if (rejected)
+      return (
+        "The provider rejected the approved action, so nothing changed. Tell the user why and offer a corrected action. Provider error:\n" +
+        renderToolResult(spec, error instanceof Error ? error.message : "")
+      );
     return (
       "The approved action was interrupted. Its outcome may be uncertain and it will not be retried automatically. Tell the user to verify with the provider. Provider error:\n" +
       renderToolResult(spec, error instanceof Error ? error.message : "")
     );
   }
 }
+
+// Open cards in this conversation, for the per-turn runtime context. Only ids,
+// tool names and ages: the arguments are already in the transcript.
+export async function openApprovals(conversationId: string, userId: string) {
+  return prisma.actionApproval.findMany({
+    where: {
+      run: { conversationId, userId },
+      status: { in: ["pending", "approved"] },
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: "asc" },
+    take: 20,
+    select: { id: true, toolName: true, status: true, createdAt: true },
+  });
+}
+
+const cancelArgs = z.strictObject({ approval_id: z.string().min(1).max(200) });
+export const cancelApprovalSpec: ToolSpec = {
+  name: "cancel_approval",
+  label: "Withdraw an approval card",
+  description:
+    "Withdraw a pending approval card that the user corrected, replaced or no longer wants. The action never runs. Propose the corrected action separately if there is one.",
+  parameters: cancelArgs.toJSONSchema(),
+  risk: "write_reversible_self",
+  sideEffect: "reversible",
+  idempotent: true,
+  provenance: "mimir:harness/internal",
+  resultTrust: "trusted",
+  outputMaxChars: 1000,
+  // Refusals happen here, before the action journal.
+  prepare: async (raw, ctx) => {
+    const { approval_id } = cancelArgs.parse(raw);
+    const card = await prisma.actionApproval.findFirst({
+      where: {
+        id: approval_id,
+        run: { conversationId: ctx.conversationId, userId: ctx.userId },
+      },
+    });
+    if (!card) throw new ToolError("validation", "No such approval card");
+    if (!["pending", "approved"].includes(card.status))
+      throw new ToolError(
+        "validation",
+        `That card is already ${card.status}; nothing to withdraw`,
+      );
+    return { approval_id };
+  },
+  execute: async (raw, ctx) => {
+    const { approval_id } = cancelArgs.parse(raw);
+    const { count } = await prisma.actionApproval.updateMany({
+      where: {
+        id: approval_id,
+        run: { conversationId: ctx.conversationId, userId: ctx.userId },
+        status: { in: ["pending", "approved"] },
+      },
+      data: { status: "canceled" },
+    });
+    return { withdrawn: count === 1 };
+  },
+};

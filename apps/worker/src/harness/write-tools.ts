@@ -203,7 +203,8 @@ export async function writeToolsFor(
           current.subject !== args.subject ||
           current.body !== args.body
         )
-          throw new Error(
+          throw new ToolError(
+            "validation",
             "Draft changed or is no longer available; no message sent",
           );
         // Omit From: Gmail uses the authenticated connected account. Recipient,

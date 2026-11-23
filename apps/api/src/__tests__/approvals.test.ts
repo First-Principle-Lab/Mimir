@@ -157,7 +157,26 @@ test("declined and expired cards cannot later authorize an action", async () => 
   ).toBe(410);
 });
 test("a new user correction or stop cancels older cards", async () => {
+  // An ordinary message leaves open cards alone.
   const c = await card();
+  const chat = await fetch(base + "/message", {
+    method: "POST",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({
+      conversationId,
+      content: "Also, what's on my calendar tomorrow?",
+      clientMessageId: randomUUID(),
+    }),
+  });
+  expect(chat.status).toBe(202);
+  expect(
+    (await prisma.actionApproval.findUniqueOrThrow({ where: { id: c.id } }))
+      .status,
+  ).toBe("pending");
+  expect(
+    (await prisma.agentRun.findUniqueOrThrow({ where: { id: c.runId } }))
+      .status,
+  ).toBe("waiting_human");
   const response = await fetch(base + "/message", {
     method: "POST",
     headers: { cookie, "content-type": "application/json" },
