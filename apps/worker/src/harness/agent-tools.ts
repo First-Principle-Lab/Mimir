@@ -73,14 +73,39 @@ async function spawnTarget(agent: string, ctx: ToolRunContext) {
   return { parent, definition };
 }
 
-export function agentTools(opts: { queue?: Queue } = {}): ToolSpec[] {
+// Built-in definitions plus the user's own, which win on a name clash.
+export async function availableDefinitions(userId: string) {
+  const rows = await prisma.agentDefinition.findMany({
+    where: { OR: [{ userId }, { userId: null }] },
+    orderBy: [{ userId: "asc" }, { name: "asc" }],
+    select: { name: true, description: true, userId: true },
+  });
+  const byName = new Map<string, { name: string; description: string }>();
+  for (const r of rows)
+    if (!byName.has(r.name) || r.userId) byName.set(r.name, r);
+  return [...byName.values()];
+}
+
+export function agentTools(
+  opts: {
+    queue?: Queue;
+    definitions?: { name: string; description: string }[];
+  } = {},
+): ToolSpec[] {
   const queue = opts.queue ?? agentJobs;
+  const choices = opts.definitions?.length
+    ? " Agents: " +
+      opts.definitions
+        .map((d) => `${d.name} (${d.description.slice(0, 200)})`)
+        .join("; ") +
+      "."
+    : "";
   return [
     {
       ...internal,
       name: "spawn_agent",
       label: "Start a background agent",
-      description: `Start a read-only background agent with a brief and return at once; its result arrives later as a background input. Use for long work that shouldn't hold the chat, multi-source research, triage of many items, and whenever the user asks for background work. Otherwise answer short or sequential requests yourself. Give a self-contained objective, success criteria and the context it needs, including the user's instructions about how to do the work (helpers per item, proposals for review): it can't see this conversation. One agent per independent task; put items the user wants handled separately in items (one helper each). At most ${AGENT_MAX_ACTIVE_PER_USER} active. agent defaults to "researcher". Agents never message the user and propose writes instead of making them.`,
+      description: `Start a read-only background agent with a brief and return at once; its result arrives later as a background input. Use for long work that shouldn't hold the chat, multi-source research, triage of many items, and whenever the user asks for background work. Otherwise answer short or sequential requests yourself. Give a self-contained objective, success criteria and the context it needs, including the user's instructions about how to do the work (helpers per item, proposals for review): it can't see this conversation. One agent per independent task; put items the user wants handled separately in items (one helper each). At most ${AGENT_MAX_ACTIVE_PER_USER} active. agent defaults to "researcher". Agents never message the user and propose writes instead of making them.${choices}`,
       // Input mode: fields with defaults stay optional for the model.
       parameters: spawnArgs.toJSONSchema({ io: "input" }),
       // Refusals happen here, before the action journal.

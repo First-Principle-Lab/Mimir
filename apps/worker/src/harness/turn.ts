@@ -34,7 +34,11 @@ import {
   openApprovals,
   resumeApproval,
 } from "./approvals.js";
-import { activeAgents, agentTools } from "./agent-tools.js";
+import {
+  activeAgents,
+  agentTools,
+  availableDefinitions,
+} from "./agent-tools.js";
 import {
   claimInputs,
   inputText,
@@ -351,7 +355,10 @@ async function runConversation(
       assertOwned,
       sanitize,
     }),
-    ...agentTools({ queue: options.agentQueue }),
+    ...agentTools({
+      queue: options.agentQueue,
+      definitions: await availableDefinitions(userId),
+    }),
     cancelApprovalSpec,
   );
   const agents = await activeAgents(conversationId);

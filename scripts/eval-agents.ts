@@ -170,6 +170,8 @@ const allCases = [
   "correction",
   "proposed-write",
   "fan-out",
+  "stop",
+  "custom-definition",
 ] as const;
 const cases = allCases.filter(
   (name) =>
@@ -452,6 +454,78 @@ try {
           })),
           "Mail was sent from a proposal",
         );
+      } else if (name === "stop") {
+        await post(
+          "In the background, collect everything my emails say about Maple.",
+        );
+        const [agent] = await agents();
+        requireThat(agent, "No background agent was started");
+        const response = await fetch(base + "/api/v1/message", {
+          method: "POST",
+          headers: { cookie, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversationId: c.id,
+            content: "stop",
+            clientMessageId: randomUUID(),
+          }),
+        });
+        requireThat(response.status === 202, "Stop intake failed");
+        const stopped = (await response.json()) as { message: { id: string } };
+        await (await turns.getJob("turn-" + stopped.message.id))?.waitUntilFinished(
+          events,
+          180000,
+        );
+        requireThat(
+          (await prisma.agentRun.findUniqueOrThrow({ where: { id: agent.id } }))
+            .status === "canceled",
+          "Stop did not cancel the background agent",
+        );
+        agentWorker.resume();
+        if (!agentWorker.isRunning()) void agentWorker.run();
+        await Bun.sleep(1500);
+        requireThat(
+          !(await prisma.inboxInput.count({
+            where: { conversationId: c.id, kind: "agent_result" },
+          })),
+          "A stopped agent posted a result",
+        );
+      } else if (name === "custom-definition") {
+        await prisma.agentDefinition.create({
+          data: {
+            id: randomUUID(),
+            userId,
+            name: "project-status",
+            description: "Reports the current status of one named project from email",
+            prompt:
+              "Find the latest email about the project in the brief and report its status in one line.",
+            tools: ["search_email"],
+            maxSteps: 6,
+            maxUsd: 0.05,
+            timeoutSec: 180,
+          },
+        });
+        await post(
+          "Use my project-status agent in the background to check on Birch.",
+        );
+        const [agent] = await agents();
+        requireThat(agent, "No background agent was started");
+        const definition = await prisma.agentDefinition.findUnique({
+          where: { id: agent.definitionId ?? "" },
+        });
+        requireThat(
+          definition?.name === "project-status" && definition.userId === userId,
+          "The user's own definition was not used",
+        );
+        agentWorker.resume();
+        if (!agentWorker.isRunning()) void agentWorker.run();
+        const done = await settle(agent.id);
+        requireThat(done.status === "succeeded", "Agent " + done.status);
+        requireThat(
+          done.budgetUsd === 0.05,
+          "The definition's budget was not applied",
+        );
+        const summary = (done.result as { summary?: string }).summary ?? "";
+        requireThat(/January/i.test(summary), "Birch's status was missed");
       } else if (name === "fan-out") {
         await post(
           "In the background, have a separate helper check my email for the current status of each project: Cedar, Birch and Maple. Then give me one line per project.",
@@ -566,6 +640,7 @@ try {
       where: { payload: { path: ["userId"], equals: userId } },
     });
     await prisma.emailDraft.deleteMany({ where: { userId } });
+    await prisma.agentDefinition.deleteMany({ where: { userId } });
     await prisma.message.deleteMany({ where: { conversation: { userId } } });
     await prisma.conversation.deleteMany({ where: { userId } });
     await prisma.integrationConnection.deleteMany({ where: { userId } });

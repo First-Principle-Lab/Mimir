@@ -6,7 +6,9 @@ import {
   AGENT_MAX_RUNNING_PER_USER,
   AGENT_RESULT_MAX_CHARS,
   AGENT_ROOT_MAX_USD,
+  AGENT_ACTIVE_STATUSES,
   AGENT_STALE_MS,
+  cancelAgentRuns,
   getConfig,
   getLogger,
   getPrismaClient,
@@ -52,7 +54,7 @@ export type AgentStatus =
   | "timeout"
   | "budget_exceeded"
   | "canceled";
-export const ACTIVE = ["queued", "running"];
+export const ACTIVE = AGENT_ACTIVE_STATUSES;
 export interface ProposedAction {
   tool: string;
   arguments: unknown;
@@ -195,14 +197,7 @@ export async function createAgentRun(opts: {
 // Cancel a run and everything under it. Depth is at most 2, so descendants
 // either have it as parent or as root.
 export async function cancelAgentTree(runId: string): Promise<number> {
-  const { count } = await prisma.agentRun.updateMany({
-    where: {
-      trigger: "agent",
-      status: { in: ACTIVE },
-      OR: [{ id: runId }, { parentRunId: runId }, { rootRunId: runId }],
-    },
-    data: { status: "canceled", finishedAt: new Date() },
-  });
+  const count = await cancelAgentRuns(prisma, [runId]);
   // A queued job is removed; an active one sees the status and aborts.
   await agentJobs.remove(agentJobId(runId)).catch(() => 0);
   return count;

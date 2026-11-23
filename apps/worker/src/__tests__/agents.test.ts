@@ -27,7 +27,8 @@ const {
   runAgentJob,
   unverifiedTargets,
 } = await import("../harness/agents.js");
-const { agentTools } = await import("../harness/agent-tools.js");
+const { agentTools, availableDefinitions } =
+  await import("../harness/agent-tools.js");
 const { decideAction, invokeTool } = await import("../harness/actions.js");
 const { buildRuntimeContext } = await import("../harness/context.js");
 const { inputText } = await import("../harness/inbox.js");
@@ -802,4 +803,64 @@ test("a refused spawn or message is a plain error, not an uncertain journaled ac
     await prisma.conversation.delete({ where: { id: convo.id } });
     await prisma.user.delete({ where: { id: owner.id } });
   }
+});
+
+test("a user's own definitions are offered to spawn_agent and override built-ins by name", async () => {
+  await prisma.agentDefinition.create({
+    data: {
+      id: randomUUID(),
+      userId,
+      name: "inbox-triage",
+      description: "Sorts new mail by urgency",
+      prompt: "Group unread mail by urgency.",
+      tools: ["search_email"],
+      maxSteps: 5,
+      maxUsd: 0.02,
+      timeoutSec: 120,
+    },
+  });
+  await prisma.agentDefinition.create({
+    data: {
+      id: randomUUID(),
+      userId,
+      name: "reader",
+      description: "My own reader",
+      prompt: "Read carefully.",
+      tools: ["*"],
+      maxSteps: 3,
+      maxUsd: 0.01,
+      timeoutSec: 60,
+    },
+  });
+  const definitions = await availableDefinitions(userId);
+  // ("tiny" comes from the budget test above.)
+  expect(definitions.map((d) => d.name).sort()).toEqual([
+    "inbox-triage",
+    "reader",
+    "researcher",
+    "tiny",
+  ]);
+  expect(definitions.find((d) => d.name === "reader")!.description).toBe(
+    "My own reader",
+  );
+  // Another user never sees them.
+  expect(
+    (await availableDefinitions(otherUserId)).map((d) => d.name).sort(),
+  ).toEqual(["reader", "researcher"]);
+  const spawn = agentTools({ definitions }).find(
+    (s) => s.name === "spawn_agent",
+  )!;
+  expect(spawn.description).toContain("inbox-triage (Sorts new mail by urgency)");
+  const parent = await interactionRun();
+  const out = (await invokeTool(
+    spawn,
+    { agent: "inbox-triage", objective: "Triage today's mail" },
+    chatCtx(parent.id),
+  )) as { agentId: string; agent: string };
+  expect(out.agent).toBe("inbox-triage");
+  const run = await prisma.agentRun.findUniqueOrThrow({
+    where: { id: out.agentId },
+  });
+  expect(run.budgetUsd).toBe(0.02);
+  await cancelAgentTree(run.id);
 });

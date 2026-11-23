@@ -1,4 +1,10 @@
-import { getLogger, getPrismaClient, trackEvent } from "@mimir/backend-core";
+import {
+  AGENT_ACTIVE_STATUSES,
+  cancelAgentRuns,
+  getLogger,
+  getPrismaClient,
+  trackEvent,
+} from "@mimir/backend-core";
 import { messageSchema } from "@mimir/zod-schemas";
 import { Router } from "express";
 import { requireAuth } from "../auth/auth.js";
@@ -120,9 +126,24 @@ export function createMessageRouter(
       // The message and its turn's outbox row commit together, so a crash right
       // after this can't leave a message the harness never hears about.
       [userMsg, outboxId] = await prisma.$transaction(async (tx) => {
-        // An explicit stop withdraws every open card. Other messages leave
-        // cards open; the model cancels a card it is correcting.
+        // An explicit stop withdraws every open card and cancels the
+        // conversation's background agents. Other messages leave both alone;
+        // the model cancels what it is correcting.
         if (stop) {
+          const agents = await tx.agentRun.findMany({
+            where: {
+              conversationId,
+              userId,
+              trigger: "agent",
+              depth: 1,
+              status: { in: AGENT_ACTIVE_STATUSES },
+            },
+            select: { id: true },
+          });
+          await cancelAgentRuns(
+            tx,
+            agents.map((a) => a.id),
+          );
           await tx.actionApproval.updateMany({
             where: {
               run: { conversationId, userId },

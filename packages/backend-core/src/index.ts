@@ -22,5 +22,6 @@ export {
   workerSystemPrompt,
 } from "./prompts.js";
 export * from "./inbox.js";
+export * from "./agents.js";
 export * from "./notification-policy.js";
 export * from "./visible-content.js";
