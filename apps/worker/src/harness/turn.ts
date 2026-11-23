@@ -350,6 +350,7 @@ async function runConversation(
     select: { content: true },
   });
   const safety: NonNullable<ToolRunContext["safety"]> = {
+    mutationsStopped: false,
     ambient,
     pendingApproval: false,
     tainted:
@@ -381,7 +382,6 @@ async function runConversation(
     cancelApprovalSpec,
   );
   const agents = await activeAgents(conversationId);
-  const approvals = await openApprovals(conversationId, userId);
   if (inputs.some((i) => i.kind === "approval_answer")) {
     const controller = new AbortController();
     const deadline = setTimeout(
@@ -414,6 +414,9 @@ async function runConversation(
       clearInterval(cancel);
     }
   }
+  // Resolve decisions before building the volatile tail: failed/completed
+  // cards must not still appear there as open approvals.
+  const approvals = await openApprovals(conversationId, userId);
   let session: AgentSession;
   try {
     session = await sessions.open(conversationId, {
@@ -644,6 +647,7 @@ async function runConversation(
         )
           return;
         await claimInputs(fresh, runId);
+        safety.mutationsStopped = false;
         await session.steer(inputText(fresh));
         inputs.push(...fresh);
       })

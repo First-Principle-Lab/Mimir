@@ -190,11 +190,13 @@ test("an approved provider error remains untrusted and cannot enable an automati
       {},
       ctx,
     ).decision,
-  ).toBe("approve");
+  ).toBe("block");
   expect(
-    (await prisma.actionApproval.findUniqueOrThrow({
-      where: { id: pending.approvalId },
-    })).status,
+    (
+      await prisma.actionApproval.findUniqueOrThrow({
+        where: { id: pending.approvalId },
+      })
+    ).status,
   ).toBe("interrupted");
   await resumeApproval(input, [spec], ctx);
   expect(calls).toBe(1);
@@ -207,7 +209,10 @@ test("a provider rejection is recorded as failed, may run again and tells the us
     execute: async () => {
       calls++;
       if (reject)
-        throw new ProviderError("validation_failed", "provider rejected request (422)");
+        throw new ProviderError(
+          "validation_failed",
+          "provider rejected request (422)",
+        );
       return { ok: true };
     },
   });
@@ -219,14 +224,51 @@ test("a provider rejection is recorded as failed, may run again and tells the us
   expect(result).toContain("nothing changed");
   expect(result).not.toContain("uncertain");
   expect(
-    (await prisma.actionApproval.findUniqueOrThrow({
-      where: { id: pending.approvalId },
-    })).status,
+    (
+      await prisma.actionApproval.findUniqueOrThrow({
+        where: { id: pending.approvalId },
+      })
+    ).status,
   ).toBe("failed");
   const attempt = await prisma.actionAttempt.findFirstOrThrow({
     where: { runId: ctx.runId },
   });
   expect(attempt.status).toBe("failed");
+  const draft = (await writeToolsFor(userId)).find(
+    (s) => s.name === "email_draft",
+  )!;
+  const draftsBefore = await prisma.emailDraft.count({ where: { userId } });
+  await expect(
+    invokeTool(
+      draft,
+      {
+        to: "unused@placeholder.invalid",
+        subject: "unused",
+        body: "unused",
+      },
+      { ...ctx, toolCallId: randomUUID() },
+    ),
+  ).rejects.toThrow("new user instruction");
+  expect(await prisma.emailDraft.count({ where: { userId } })).toBe(
+    draftsBefore,
+  );
+  expect(
+    await prisma.actionAttempt.count({ where: { runId: ctx.runId } }),
+  ).toBe(1);
+  expect(
+    decideAction(
+      synthetic({ risk: "read_private", sideEffect: "none" }),
+      {},
+      ctx,
+    ).decision,
+  ).toBe("allow");
+  expect(
+    decideAction(
+      draft,
+      {},
+      { ...ctx, safety: { ...ctx.safety!, mutationsStopped: false } },
+    ).decision,
+  ).toBe("allow");
   // The same reviewed action may run again once the provider accepts it.
   reject = false;
   expect(await executeJournaled(spec, { body: "Reviewed" }, ctx)).toEqual({
@@ -234,8 +276,11 @@ test("a provider rejection is recorded as failed, may run again and tells the us
   });
   expect(calls).toBe(2);
   expect(
-    (await prisma.actionAttempt.findFirstOrThrow({ where: { runId: ctx.runId } }))
-      .status,
+    (
+      await prisma.actionAttempt.findFirstOrThrow({
+        where: { runId: ctx.runId },
+      })
+    ).status,
   ).toBe("succeeded");
   // An outage stays uncertain and is never repeated.
   const outage = synthetic({
@@ -279,9 +324,11 @@ test("cancel_approval withdraws an open card in this conversation only", async (
     ),
   ).toEqual({ withdrawn: true });
   expect(
-    (await prisma.actionApproval.findUniqueOrThrow({
-      where: { id: pending.approvalId },
-    })).status,
+    (
+      await prisma.actionApproval.findUniqueOrThrow({
+        where: { id: pending.approvalId },
+      })
+    ).status,
   ).toBe("canceled");
   await expect(
     invokeTool(

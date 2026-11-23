@@ -52,6 +52,8 @@ export interface ToolRunContext {
     ambient: boolean;
     tainted: boolean;
     pendingApproval: boolean;
+    // A terminal approval outcome closes writes until a fresh user input.
+    mutationsStopped?: boolean;
     allowedDomains: Set<string>;
   };
 }

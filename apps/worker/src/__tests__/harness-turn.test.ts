@@ -1004,6 +1004,120 @@ describe("Phase Two inbox and response rules", () => {
       expect(calls).toBe(1);
       await prisma.actionAttempt.deleteMany({ where: { runId: run.id } });
     }));
+
+  test("a rejected approval blocks unrelated writes, clears the open-card tail and accepts a fresh user request", async () =>
+    isolated(async (id) => {
+      const { ProviderError } = await import("@mimir/connection-provider");
+      let drafts = 0;
+      const post: import("../harness/tools.js").ToolSpec = {
+        name: "rejected_post",
+        label: "Post issue",
+        description: "Synthetic rejected action",
+        parameters: { type: "object", properties: {} },
+        risk: "communicate_external",
+        sideEffect: "irreversible",
+        idempotent: false,
+        provenance: "test:rejection",
+        resultTrust: "untrusted",
+        outputMaxChars: 1000,
+        execute: async () => {
+          throw new ProviderError(
+            "validation_failed",
+            "Provider rejected (422)",
+          );
+        },
+      };
+      const draft: import("../harness/tools.js").ToolSpec = {
+        ...post,
+        name: "local_draft",
+        label: "Local draft",
+        risk: "write_reversible_self",
+        sideEffect: "reversible",
+        idempotent: true,
+        provenance: "mimir:harness/internal",
+        resultTrust: "trusted",
+        execute: async () => {
+          drafts++;
+          return { saved: true };
+        },
+      };
+      const options = { readTools: async () => [post, draft] };
+      try {
+        const a = await input(id, "Create the reviewed issue");
+        faux.setResponses([
+          reply([fauxToolCall("rejected_post", {})], { stopReason: "toolUse" }),
+          reply([fauxText("Review the card.")]),
+        ]);
+        await runTurn(
+          { conversationId: id, userId, messageId: a.message.id },
+          options,
+        );
+        const card = await prisma.actionApproval.findFirstOrThrow({
+          where: { run: { conversationId: id } },
+        });
+        await prisma.actionApproval.update({
+          where: { id: card.id },
+          data: { status: "approved" },
+        });
+        const decision = await prisma.inboxInput.create({
+          data: {
+            conversationId: id,
+            kind: "approval_answer",
+            source: "user:approval-card",
+            dedupeKey: card.id,
+            payload: {
+              kind: "approval_answer",
+              approvalId: card.id,
+              approved: true,
+            },
+          },
+        });
+        faux.setResponses([
+          reply([fauxToolCall("local_draft", {})], { stopReason: "toolUse" }),
+          reply([
+            fauxText("The provider rejected the action; nothing was created."),
+          ]),
+        ]);
+        await runTurn(
+          { conversationId: id, userId, inputId: decision.id },
+          options,
+        );
+        expect(drafts).toBe(0);
+        expect(
+          await prisma.actionAttempt.count({ where: { runId: card.runId } }),
+        ).toBe(1);
+        expect(
+          (
+            await prisma.actionApproval.findUniqueOrThrow({
+              where: { id: card.id },
+            })
+          ).status,
+        ).toBe("failed");
+        const tail = seen
+          .at(-1)!
+          .messages.filter((m) => textOf(m).includes("<runtime_context>"));
+        expect(tail.length).toBeGreaterThan(0);
+        expect(JSON.stringify(tail)).not.toContain(card.id);
+        const fresh = await input(id, "Save a local draft now");
+        faux.setResponses([
+          reply([fauxToolCall("local_draft", {})], { stopReason: "toolUse" }),
+          reply([fauxText("Saved.")]),
+        ]);
+        await runTurn(
+          { conversationId: id, userId, messageId: fresh.message.id },
+          options,
+        );
+        expect(drafts).toBe(1);
+      } finally {
+        const runs = await prisma.agentRun.findMany({
+          where: { conversationId: id },
+          select: { id: true },
+        });
+        await prisma.actionAttempt.deleteMany({
+          where: { runId: { in: runs.map((r) => r.id) } },
+        });
+      }
+    }));
 });
 
 describe("repliesByInput", () => {
