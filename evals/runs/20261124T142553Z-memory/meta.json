@@ -1,0 +1,14 @@
+{
+  "topic": "phase-6-memory-regression",
+  "suite": "memory",
+  "status": "passed",
+  "exitCode": 0,
+  "testedCommit": "3eefed6828c8555736e9a6192721970c226800f9",
+  "testedRef": "feat/phase-6-hardening",
+  "branch": "eval/2026-11-24-memory-phase-6-memory-regression",
+  "runId": "20261124T142553Z-memory",
+  "startedAt": "2026-11-24T14:25:54Z",
+  "finishedAt": "2026-11-24T14:29:55Z",
+  "runner": "local",
+  "runUrl": null
+}
