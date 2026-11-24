@@ -55,3 +55,6 @@ packages/backend-core/src/generated/
 
 # LLM prompts (deploy via volumes/CI, see prompts.example)
 apps/api/src/prompts/
+
+# Private memory migration snapshots; never publish personal data.
+results/private-memory/

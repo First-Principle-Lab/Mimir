@@ -3,7 +3,7 @@
 # The branch is the tested commit plus one commit adding evals/runs/<run-id>/.
 #
 # Usage: scripts/eval/run.sh <suite> "<topic>" [--push]
-#   suite: retrieval | query | locomo | harness
+#   suite: retrieval | query | locomo | harness | memory
 # Exit code: the suite's own exit code (0 pass, 1 fail, 2 not run), so CI can gate on it.
 set -euo pipefail
 
@@ -11,16 +11,20 @@ suite="${1:-}"
 topic="${2:-}"
 push="${3:-}"
 case "$suite" in
-  retrieval | query | locomo | harness) ;;
-  *) echo "usage: scripts/eval/run.sh <retrieval|query|locomo|harness> \"<topic>\" [--push]" >&2; exit 64 ;;
+  retrieval | query | locomo | harness | memory) ;;
+  *) echo "usage: scripts/eval/run.sh <retrieval|query|locomo|harness|memory> \"<topic>\" [--push]" >&2; exit 64 ;;
 esac
+if [ "$suite" = "memory" ] && [ -n "${MEMORY_EVAL_FILTER:-}" ]; then
+  echo "published memory evaluations require the full suite; unset MEMORY_EVAL_FILTER" >&2
+  exit 64
+fi
 [ -n "$topic" ] || { echo "a topic is required: say what this eval run is about" >&2; exit 64; }
 
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
 # The branch must match what was tested, so refuse to run on uncommitted changes.
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+if [ -n "$(git status --porcelain)" ]; then
   echo "working tree has uncommitted changes; commit them first" >&2
   exit 64
 fi

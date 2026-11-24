@@ -1,9 +1,16 @@
+import type {
+  SessionManager,
+  SessionBeforeCompactEvent,
+  CompactionResult,
+} from "@earendil-works/pi-coding-agent";
+import { clearOldToolResults, routingSessionId } from "./context-policy.js";
+import { retainToolOutput } from "./tool-artifacts.js";
 import { randomUUID } from "node:crypto";
 import {
   createToolSearchExtension,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import { HARNESS_TOOL_OUTPUT_MAX_CHARS } from "@mimir/backend-core";
+import { getLogger, HARNESS_TOOL_OUTPUT_MAX_CHARS } from "@mimir/backend-core";
 import {
   describeToolError,
   isReadOnly,
@@ -17,9 +24,13 @@ import { decideAction, invokeTool } from "./actions.js";
 export interface MimirExtensionOptions {
   specs: ToolSpec[];
   ctx: ToolRunContext;
-  // Rebuilt per model call so the time stays current across a long run.
-  runtimeContext: () => string;
+  // Rebuilt per model call so time and mutable status stay current.
+  runtimeContext: () => string | Promise<string>;
   generation?: { maxOutputTokens: number; temperature: number };
+  contextWindow?: number;
+  sessionManager?: SessionManager;
+  profileContext?: string;
+  summarize?: (event: SessionBeforeCompactEvent) => Promise<CompactionResult>;
 }
 
 // The Mimir harness as one inline pi extension: Mimir's tools, the policy gate,
@@ -29,6 +40,18 @@ export function mimirExtension(
   opts: MimirExtensionOptions,
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
+    if (opts.summarize)
+      pi.on("session_before_compact", async (event) => {
+        try {
+          return { compaction: await opts.summarize!(event) };
+        } catch (error) {
+          getLogger().warn(
+            { err: error },
+            "context summarization failed; retaining original history",
+          );
+          return { cancel: true };
+        }
+      });
     const specs = [...opts.specs];
     // Adapt the pinned SDK discovery implementation into a ToolSpec too. Its
     // execute function takes only id/arguments and closes over pi's registry;
@@ -94,7 +117,15 @@ export function mimirExtension(
               aborted,
             ]);
             return {
-              content: [{ type: "text", text: renderToolResult(spec, value) }],
+              content: [
+                {
+                  type: "text",
+                  text: renderToolResult(
+                    spec,
+                    await retainToolOutput(spec, value, opts.ctx),
+                  ),
+                },
+              ],
               details: {},
             };
           } catch (e) {
@@ -140,29 +171,48 @@ export function mimirExtension(
     // The pinned OpenRouter provider uses the OpenAI chat payload. Keep the
     // deployment's generation limits when embedding pi instead of its CLI.
     pi.on("before_provider_request", async (event) => {
-      if (!opts.generation) return;
+      const payload = { ...(event.payload as Record<string, unknown>) };
+      if (opts.generation) {
+        const tokenKey =
+          "max_completion_tokens" in payload
+            ? "max_completion_tokens"
+            : "max_tokens";
+        delete payload.max_completion_tokens;
+        delete payload.max_tokens;
+        payload[tokenKey] = opts.generation.maxOutputTokens;
+        payload.temperature = opts.generation.temperature;
+      }
       return {
-        ...(event.payload as Record<string, unknown>),
-        max_tokens: opts.generation.maxOutputTokens,
-        temperature: opts.generation.temperature,
+        ...payload,
+        session_id: routingSessionId(opts.ctx.userId, opts.ctx.conversationId),
       };
     });
 
-    // Runtime context goes right before the latest user message on every model
-    // call. Returning a new list doesn't touch the stored session, so the
+    // Volatile context is the final tail, after profile, summary and history.
+    // Returning a new list does not touch the stored session, so the
     // transcript never fills up with stale timestamps.
     pi.on("context", async (event) => {
-      const messages = [...event.messages];
-      let at = messages.length;
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i]?.role === "user") {
-          at = i;
-          break;
-        }
-      }
-      messages.splice(at, 0, {
+      const messages = [
+        ...clearOldToolResults(
+          event.messages,
+          opts.contextWindow ?? 64000,
+          opts.sessionManager,
+        ),
+      ];
+      if (opts.profileContext)
+        messages.unshift({
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "<user_profile>" + opts.profileContext + "</user_profile>",
+            },
+          ],
+          timestamp: 0,
+        });
+      messages.push({
         role: "user",
-        content: [{ type: "text", text: opts.runtimeContext() }],
+        content: [{ type: "text", text: await opts.runtimeContext() }],
         timestamp: Date.now(),
       } as (typeof messages)[number]);
       return { messages };

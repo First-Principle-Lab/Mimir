@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   AgentSession,
   SessionEntry,
@@ -15,7 +15,7 @@ import {
   HARNESS_LEGACY_HISTORY_LIMIT,
   HARNESS_TURN_TIMEOUT_MS,
   rollDailyUsage,
-  searchActiveFactsWithRelations,
+  memoryGateway,
   trackEvent,
   trackModelCall,
   type FactHit,
@@ -134,7 +134,7 @@ function assistantText(message: unknown): string {
     role?: string;
     content?: Array<{ type: string; text?: string }>;
   };
-  if (m.role !== "assistant" || !Array.isArray(m.content)) return "";
+  if (!m || m.role !== "assistant" || !Array.isArray(m.content)) return "";
   return m.content
     .filter((c) => c.type === "text" && typeof c.text === "string")
     .map((c) => c.text)
@@ -288,11 +288,29 @@ async function runConversation(
   ]);
   let facts: FactHit[] = [];
   if (messageCount >= HARNESS_FACTS_MIN_MESSAGES) {
-    facts = await searchActiveFactsWithRelations(conversationId, content).catch(
-      (e) => {
-        log.warn({ err: e }, "fact retrieval failed; continuing without facts");
-        return [];
-      },
+    facts = await Promise.all(
+      (["conversation", "user"] as const).map((scope) =>
+        memoryGateway()
+          .search({ userId, conversationId }, scope, content)
+          .catch((e) => {
+            log.warn(
+              { err: e },
+              "memory retrieval failed; continuing without this scope",
+            );
+            return [];
+          }),
+      ),
+    ).then((groups) =>
+      groups
+        .flat()
+        .slice(0, 12)
+        .map((r) => ({
+          id: r.id,
+          subject: r.subject,
+          fact: r.fact,
+          similarity: 0,
+          sources: [memoryGateway().provider.id],
+        })),
     );
   }
 
@@ -332,9 +350,11 @@ async function runConversation(
     select: { content: true },
   });
   const safety: NonNullable<ToolRunContext["safety"]> = {
+    mutationsStopped: false,
     ambient,
     pendingApproval: false,
     tainted:
+      facts.length > 0 ||
       rows.some((r) => JSON.stringify(r.data).includes("<untrusted_content")) ||
       inputs.some((i) => i.kind === "agent_result" || i.kind === "event"),
     allowedDomains: visibleDomains(
@@ -361,8 +381,6 @@ async function runConversation(
     }),
     cancelApprovalSpec,
   );
-  const agents = await activeAgents(conversationId);
-  const approvals = await openApprovals(conversationId, userId);
   if (inputs.some((i) => i.kind === "approval_answer")) {
     const controller = new AbortController();
     const deadline = setTimeout(
@@ -400,22 +418,37 @@ async function runConversation(
     session = await sessions.open(conversationId, {
       entries: rows.map((r) => r.data as unknown as SessionEntry),
       history,
+      onCompactionUsage: (u) => {
+        usage.promptTokens += u.input;
+        usage.completionTokens += u.output;
+        usage.costUsd += u.cost.total;
+      },
+      profileContext: JSON.stringify({ timezone: user?.timezone ?? "UTC" }),
       specs,
       ctx: { userId, conversationId, runId, safety, assertOwned },
-      runtimeContext: () =>
-        buildRuntimeContext({
-          now: options.now?.() ?? new Date(),
-          timezone: user?.timezone ?? null,
-          facts,
-          agents,
-          approvals,
-        }) +
-        (interruptedBefore.length
-          ? "\n<action_status>Prior actions were interrupted and may have reached their providers: " +
-            interruptedBefore.map((a) => a.toolName).join(", ") +
-            ". Never repeat them automatically; report uncertainty and verify outcomes with read tools.</action_status>"
-          : "") +
-        `\n<response_contract>Mode: ${ambient ? "ambient" : "chat"}. ${ambient ? "No user reply is owed. Speak only with send_to_user(text, urgency, reason_code). For nothing new or relevant, finish with exactly NO_REPLY. Never deliver plain final text." : "A reply is owed to every user input in this turn, including corrections. Finish with a visible answer covering all inputs. NO_REPLY is forbidden."}</response_contract>`,
+      runtimeContext: async () => {
+        // Tool calls and other workers can change these during this turn.
+        // A captured list would advertise withdrawn cards or finished agents.
+        const [agents, approvals] = await Promise.all([
+          activeAgents(conversationId),
+          openApprovals(conversationId, userId),
+        ]);
+        return (
+          buildRuntimeContext({
+            now: options.now?.() ?? new Date(),
+            timezone: user?.timezone ?? null,
+            facts,
+            agents,
+            approvals,
+          }) +
+          (interruptedBefore.length
+            ? "\n<action_status>Prior actions were interrupted and may have reached their providers: " +
+              interruptedBefore.map((a) => a.toolName).join(", ") +
+              ". Never repeat them automatically; report uncertainty and verify outcomes with read tools.</action_status>"
+            : "") +
+          `\n<response_contract>Mode: ${ambient ? "ambient" : "chat"}. ${ambient ? "No user reply is owed. Speak only with send_to_user(text, urgency, reason_code). For nothing new or relevant, finish with exactly NO_REPLY. Never deliver plain final text." : "A reply is owed to every user input in this turn, including corrections. Finish with a visible answer covering all inputs. NO_REPLY is forbidden."}</response_contract>`
+        );
+      },
     });
   } catch (e) {
     if (!(e instanceof ModelNotAvailableError)) throw e;
@@ -481,6 +514,9 @@ async function runConversation(
   // The provider's own error (auth, quota, invalid request), so a failed
   // model call isn't recorded as an empty reply.
   let modelError: string | undefined;
+  // Compaction replaces the active message array. Capture replies from this
+  // run's events instead of indexing into a mutable history snapshot.
+  let latestAssistant: unknown;
   session.subscribe((event) => {
     if (
       event.type === "message_end" ||
@@ -518,6 +554,7 @@ async function runConversation(
         }).catch(() => {});
       }
     }
+    if (event.type === "compaction_end") persistNew();
     if (event.type === "message_end") {
       persistNew();
       const m = event.message as {
@@ -535,6 +572,7 @@ async function runConversation(
         };
       };
       if (m.role === "assistant") {
+        latestAssistant = event.message;
         lastStopReason = m.stopReason;
         if (m.stopReason === "error") {
           modelError = m.errorMessage ?? "model call failed";
@@ -548,6 +586,15 @@ async function runConversation(
         void trackModelCall({
           userId,
           useCase: "interaction",
+          systemPromptHash: createHash("sha256")
+            .update(session.systemPrompt)
+            .digest("hex"),
+          injectedBlocks: [
+            {
+              type: "memory:" + memoryGateway().provider.id,
+              refIds: facts.map((f) => f.id),
+            },
+          ],
           result: {
             content: "",
             model: m.model ?? "unknown",
@@ -568,7 +615,6 @@ async function runConversation(
     }
   });
 
-  const fromIndex = session.messages.length;
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
@@ -606,6 +652,7 @@ async function runConversation(
         )
           return;
         await claimInputs(fresh, runId);
+        safety.mutationsStopped = false;
         await session.steer(inputText(fresh));
         inputs.push(...fresh);
       })
@@ -622,12 +669,7 @@ async function runConversation(
     await session.waitForIdle();
     await pumping;
     if (pumpError) throw pumpError;
-    const latestText = () =>
-      assistantText(
-        [...session.messages.slice(fromIndex)]
-          .reverse()
-          .find((m) => (m as { role?: string }).role === "assistant"),
-      );
+    const latestText = () => assistantText(latestAssistant);
     let text = latestText();
     if (
       !response.interrupted &&
@@ -669,10 +711,7 @@ async function runConversation(
 
   const durationMs = Date.now() - startedAt;
 
-  const text = [...session.messages.slice(fromIndex)]
-    .reverse()
-    .find((m) => (m as { role?: string }).role === "assistant");
-  const finalText = assistantText(text);
+  const finalText = assistantText(latestAssistant);
   const failed =
     !response.interrupted &&
     (!finalText ||

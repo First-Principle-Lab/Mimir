@@ -114,7 +114,7 @@ describe("mimirExtension tools", () => {
           max_tokens: 999,
         },
       }),
-    ).toEqual({
+    ).toMatchObject({
       model: "test",
       messages: [],
       tools: ["lookup"],
@@ -163,7 +163,7 @@ describe("mimirExtension runtime context", () => {
     timestamp: 0,
   });
 
-  test("is inserted right before the latest user message", async () => {
+  test("is appended after recent messages", async () => {
     const { handlers } = load([]);
     const out = (await handlers.get("context")!({
       messages: [
@@ -175,12 +175,12 @@ describe("mimirExtension runtime context", () => {
     expect(out.messages.map((m) => m.content[0]!.text)).toEqual([
       "first",
       "a",
-      "<runtime_context>RC</runtime_context>",
       "second",
+      "<runtime_context>RC</runtime_context>",
     ]);
   });
 
-  test("stays before the user message while tool calls follow it", async () => {
+  test("follows a complete current tool batch", async () => {
     const { handlers } = load([]);
     const out = (await handlers.get("context")!({
       messages: [
@@ -190,10 +190,10 @@ describe("mimirExtension runtime context", () => {
       ],
     })) as { messages: { content: { text: string }[] }[] };
     expect(out.messages.map((m) => m.content[0]!.text)).toEqual([
-      "<runtime_context>RC</runtime_context>",
       "q",
       "calling",
       "r",
+      "<runtime_context>RC</runtime_context>",
     ]);
   });
 
@@ -203,4 +203,19 @@ describe("mimirExtension runtime context", () => {
     await handlers.get("context")!({ messages: stored });
     expect(stored).toHaveLength(1);
   });
+});
+
+test("provider token field and session routing survive repeated requests", async () => {
+  const { handlers } = load([], { maxOutputTokens: 2048, temperature: 0.2 });
+  const hook = handlers.get("before_provider_request")!;
+  const first = (await hook({
+    payload: { max_completion_tokens: 1, max_tokens: 9, messages: [] },
+  })) as Record<string, unknown>;
+  expect(first.max_completion_tokens).toBe(2048);
+  expect(first.max_tokens).toBeUndefined();
+  const second = (await hook({
+    payload: { messages: ["different turn"] },
+  })) as Record<string, unknown>;
+  expect(second.session_id).toBe(first.session_id);
+  expect(String(first.session_id)).toMatch(/^mimir-[a-f0-9]{64}$/);
 });

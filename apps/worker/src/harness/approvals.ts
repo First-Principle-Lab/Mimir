@@ -17,6 +17,10 @@ export async function resumeApproval(
   const payload = payloadOf(input);
   if (payload.kind !== "approval_answer")
     throw new Error("Expected an approval answer");
+  const terminal = (message: string) => {
+    if (ctx.safety) ctx.safety.mutationsStopped = true;
+    return message;
+  };
   const approval = await prisma.actionApproval.findFirst({
     where: {
       id: payload.approvalId,
@@ -25,9 +29,11 @@ export async function resumeApproval(
     },
   });
   if (!approval)
-    return "The approval no longer exists. No action was executed.";
+    return terminal("The approval no longer exists. No action was executed.");
   if (!payload.approved || approval.status === "rejected")
-    return "The user declined the action. It was not executed. Acknowledge the decision.";
+    return terminal(
+      "The user declined the action. It was not executed. Acknowledge the decision.",
+    );
   if (approval.status === "succeeded") {
     const recorded = await prisma.actionAttempt.findUnique({
       where: {
@@ -47,19 +53,21 @@ export async function resumeApproval(
     );
   }
   if (approval.status === "failed")
-    return "The provider rejected this action earlier, so nothing changed. It can be proposed again, corrected if needed.";
+    return terminal(
+      "The provider rejected this action earlier, so nothing changed. A new user instruction can request a corrected action.",
+    );
   if (approval.status !== "approved")
-    return (
+    return terminal(
       "This approval is " +
-      approval.status +
-      ". Do not repeat the action; report its recorded status."
+        approval.status +
+        ". Do not repeat the action; report its recorded status.",
     );
   if (approval.expiresAt <= new Date()) {
     await prisma.actionApproval.updateMany({
       where: { id: approval.id, status: "approved" },
       data: { status: "expired" },
     });
-    return "The approval expired. No action was executed.";
+    return terminal("The approval expired. No action was executed.");
   }
   const spec = specs.find(
     (s) => s.name === approval.toolName && s.provenance === approval.provenance,
@@ -77,20 +85,23 @@ export async function resumeApproval(
       where: { id: approval.id, status: "approved" },
       data: { status: "canceled" },
     });
-    return "The approved action is no longer available or its details changed. Nothing ran; request a fresh card.";
+    return terminal(
+      "The approved action is no longer available or its details changed. Nothing ran; ask for an updated instruction before requesting a fresh card.",
+    );
   }
-  if (!spec) return "The tool is unavailable. No action ran.";
+  if (!spec) return terminal("The tool is unavailable. No action ran.");
   await ctx.assertOwned?.();
   const claimed = await prisma.actionApproval.updateMany({
     where: { id: approval.id, status: "approved" },
     data: { status: "executing" },
   });
   if (!claimed.count)
-    return "The action already has a decision or is running; do not repeat it.";
+    return terminal(
+      "The action already has a decision or is running; do not repeat it.",
+    );
   // A provider may return untrusted text in either its result or its error.
   // Mark the context before execution, as the normal tool executor does.
-  if (ctx.safety && spec.resultTrust === "untrusted")
-    ctx.safety.tainted = true;
+  if (ctx.safety && spec.resultTrust === "untrusted") ctx.safety.tainted = true;
   try {
     const result = await executeJournaled(spec, approval.arguments, {
       ...ctx,
@@ -119,13 +130,13 @@ export async function resumeApproval(
       data: { status: rejected ? "failed" : "interrupted" },
     });
     if (rejected)
-      return (
+      return terminal(
         "The provider rejected the approved action, so nothing changed. Tell the user why and offer a corrected action. Provider error:\n" +
-        renderToolResult(spec, error instanceof Error ? error.message : "")
+          renderToolResult(spec, error instanceof Error ? error.message : ""),
       );
-    return (
+    return terminal(
       "The approved action was interrupted. Its outcome may be uncertain and it will not be retried automatically. Tell the user to verify with the provider. Provider error:\n" +
-      renderToolResult(spec, error instanceof Error ? error.message : "")
+        renderToolResult(spec, error instanceof Error ? error.message : ""),
     );
   }
 }

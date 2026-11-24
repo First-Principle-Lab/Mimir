@@ -38,6 +38,13 @@ export function decideAction(
   const risk = spec.effectiveRisk?.(args) ?? spec.risk;
   if (isReadOnly({ risk, sideEffect: spec.sideEffect }))
     return { decision: "allow", risk, reason: "read" };
+  if (ctx.safety?.mutationsStopped)
+    return {
+      decision: "block",
+      risk,
+      reason:
+        "This approval outcome ends writes for this input. Report the result and wait for a new user instruction before making more changes.",
+    };
   if (spec.provenance.startsWith("mimir:mcp/"))
     return { decision: "approve", risk, reason: "custom_mcp_action" };
   // Only Mimir's fixed internal capabilities can mutate without a card in an

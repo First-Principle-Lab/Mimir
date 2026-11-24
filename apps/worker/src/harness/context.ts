@@ -1,8 +1,9 @@
+import { renderToolResult } from "./tools.js";
 import type { FactHit } from "@mimir/backend-core";
 
 // The per-turn runtime context: everything volatile the model needs that must
 // NOT live in the system prompt (that stays static so the provider can cache it).
-// Injected right before the latest user message on every model call, never stored.
+// Appended after recent messages on every model call, never stored.
 
 export interface RuntimeContextInput {
   now: Date;
@@ -11,7 +12,12 @@ export interface RuntimeContextInput {
   // The interaction agent sees its active background agents; workers omit it.
   agents?: { id: string; agent: string; status: string; objective: string }[];
   // Approval cards still open in this conversation (interaction agent only).
-  approvals?: { id: string; toolName: string; status: string; createdAt: Date }[];
+  approvals?: {
+    id: string;
+    toolName: string;
+    status: string;
+    createdAt: Date;
+  }[];
 }
 
 function validTimezone(tz: string | null): string {
@@ -117,7 +123,12 @@ export function buildRuntimeContext(input: RuntimeContextInput): string {
   }
   if (input.facts.length > 0) {
     lines.push("Remembered facts (may be outdated):");
-    for (const f of input.facts) lines.push(`- ${f.subject}: ${f.fact}`);
+    lines.push(
+      renderToolResult(
+        { name: "memory_search", resultTrust: "untrusted" },
+        input.facts.map((f) => `- ${f.subject}: ${f.fact}`).join("\n"),
+      ),
+    );
   }
   lines.push("</runtime_context>");
   return lines.join("\n");

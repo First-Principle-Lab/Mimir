@@ -1,7 +1,12 @@
-import { FACT_EXTRACTION_TOP_K, FACT_INJECT_CAP, FACT_RRF_K } from "./constants.js";
+import {
+  FACT_EXTRACTION_TOP_K,
+  FACT_INJECT_CAP,
+  FACT_RRF_K,
+} from "./constants.js";
 import { getLogger } from "./logger.js";
 import { callEmbeddings } from "./openrouter.js";
-import { getPrismaClient } from "./prisma.js";
+import { getPrismaClient, Prisma } from "./prisma.js";
+import type { MemoryNamespace } from "./memory.js";
 
 // Lives in backend-core (not the worker) so the api can inject retrieved facts
 // into the chat reply context. The write path (extractFacts/deleteFact) stays
@@ -37,25 +42,44 @@ export async function searchActiveFacts(
   try {
     vec = await embed(query);
   } catch (e) {
-    getLogger().warn({ err: e, conversationId }, "fact search embed failed; injecting nothing (fail-open)");
+    getLogger().warn(
+      { err: e, conversationId },
+      "fact search embed failed; injecting nothing (fail-open)",
+    );
     return [];
   }
   if (vec.length === 0) return [];
   const vecLiteral = `[${vec.join(",")}]`;
 
   try {
-    const rows = await prisma.$queryRaw<{ id: string; subject: string; fact: string; similarity: number }[]>`
+    const rows = await prisma.$queryRaw<
+      { id: string; subject: string; fact: string; similarity: number }[]
+    >`
       SELECT id, subject, fact, 1 - (embedding <=> ${vecLiteral}::vector) AS similarity
       FROM "ExtractedFact"
-      WHERE status = 'active' AND "conversationId" = ${conversationId} AND embedding IS NOT NULL
+      WHERE status = 'active' AND "conversationId" = ${conversationId} AND "memoryScope" = 'conversation' AND "memoryAgentId" IS NULL AND embedding IS NOT NULL
       ORDER BY embedding <=> ${vecLiteral}::vector
       LIMIT ${topK}
     `;
     return rows.map((r) => ({ ...r, sources: ["vector"] as string[] }));
   } catch (e) {
-    getLogger().warn({ err: e, conversationId }, "fact search query failed; injecting nothing (fail-open)");
+    getLogger().warn(
+      { err: e, conversationId },
+      "fact search query failed; injecting nothing (fail-open)",
+    );
     return [];
   }
+}
+
+function namespaceFilter(conversationId: string, ns?: MemoryNamespace) {
+  if (!ns)
+    return Prisma.Prisma
+      .sql`"conversationId" = ${conversationId} AND "memoryScope" = 'conversation' AND "memoryAgentId" IS NULL`;
+  return Prisma.Prisma
+    .sql`"userId" = ${ns.userId} AND "memoryScope" = ${ns.scope}
+    AND (${ns.scope === "user"} OR "conversationId" = ${conversationId})
+    AND "memoryAgentId" IS NOT DISTINCT FROM ${ns.scope === "agent" ? ns.agentId : null}
+    AND "conversationId" IN (SELECT id FROM "Conversation" WHERE "userId" = ${ns.userId})`;
 }
 
 // Reciprocal Rank Fusion: score(doc) = sum over ranked lists of 1/(K + rank).
@@ -65,7 +89,10 @@ function rrfFuse(lists: string[][], k: number, topN: number): string[] {
   for (const list of lists) {
     list.forEach((id, i) => score.set(id, (score.get(id) ?? 0) + 1 / (k + i)));
   }
-  return [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, topN).map(([id]) => id);
+  return [...score.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topN)
+    .map(([id]) => id);
 }
 
 // Hybrid retrieval: pgvector top-K and ts_rank full-text in parallel, merged via
@@ -75,8 +102,22 @@ function rrfFuse(lists: string[][], k: number, topN: number): string[] {
 export async function searchActiveFactsWithRelations(
   conversationId: string,
   query: string,
-  deps: { embed?: (text: string) => Promise<number[]>; topK?: number } = {},
+  deps: {
+    embed?: (text: string) => Promise<number[]>;
+    topK?: number;
+    namespace?: MemoryNamespace;
+  } = {},
 ): Promise<FactHit[]> {
+  const filter = namespaceFilter(conversationId, deps.namespace);
+  const permitted = deps.namespace
+    ? {
+        userId: deps.namespace.userId,
+        memoryScope: deps.namespace.scope,
+        memoryAgentId:
+          deps.namespace.scope === "agent" ? deps.namespace.agentId : null,
+        ...(deps.namespace.scope === "user" ? {} : { conversationId }),
+      }
+    : { conversationId, memoryScope: "conversation", memoryAgentId: null };
   const topK = deps.topK ?? FACT_EXTRACTION_TOP_K;
   const embed = deps.embed ?? callEmbeddings;
   if (!query.trim()) return [];
@@ -88,13 +129,16 @@ export async function searchActiveFactsWithRelations(
       const vecLiteral = `[${vec.join(",")}]`;
       const rows = await prisma.$queryRaw<{ id: string }[]>`
         SELECT id FROM "ExtractedFact"
-        WHERE status = 'active' AND "conversationId" = ${conversationId} AND embedding IS NOT NULL
+        WHERE status = 'active' AND ${filter} AND embedding IS NOT NULL
         ORDER BY embedding <=> ${vecLiteral}::vector
         LIMIT ${topK}`;
       vectorIds.push(...rows.map((r) => r.id));
     }
   } catch (e) {
-    getLogger().warn({ err: e, conversationId }, "fact vector side failed; lexical-only (fail-open)");
+    getLogger().warn(
+      { err: e, conversationId },
+      "fact vector side failed; lexical-only (fail-open)",
+    );
   }
 
   let lexicalIds: string[] = [];
@@ -103,18 +147,24 @@ export async function searchActiveFactsWithRelations(
     // falses on a phrase where one short word is absent — "how much rent" would
     // match nothing). Splitting free-text into OR-ed terms makes a short user
     // query match on ANY present word.
-    const terms = query.split(/\s+/).map((w) => w.replace(/[^\p{L}\p{N}]/gu, "")).filter(Boolean);
+    const terms = query
+      .split(/\s+/)
+      .map((w) => w.replace(/[^\p{L}\p{N}]/gu, ""))
+      .filter(Boolean);
     if (terms.length === 0) throw new Error("no lexical terms");
     const tsq = terms.join(" | ");
     const rows = await prisma.$queryRaw<{ id: string }[]>`
       SELECT id FROM "ExtractedFact"
-      WHERE status = 'active' AND "conversationId" = ${conversationId}
+      WHERE status = 'active' AND ${filter}
         AND to_tsquery('english', ${tsq}) @@ "factSearch"
       ORDER BY ts_rank("factSearch", to_tsquery('english', ${tsq}))
       LIMIT ${topK}`;
     lexicalIds = rows.map((r) => r.id);
   } catch (e) {
-    getLogger().warn({ err: e, conversationId }, "fact lexical side failed; vector-only (fail-open)");
+    getLogger().warn(
+      { err: e, conversationId },
+      "fact lexical side failed; vector-only (fail-open)",
+    );
   }
 
   const top = rrfFuse([vectorIds, lexicalIds], FACT_RRF_K, topK);
@@ -123,18 +173,23 @@ export async function searchActiveFactsWithRelations(
   let rows: { id: string; subject: string; fact: string }[];
   try {
     rows = await prisma.extractedFact.findMany({
-      where: { id: { in: top } },
+      where: { ...permitted, status: "active", id: { in: top } },
       select: { id: true, subject: true, fact: true },
     });
   } catch (e) {
-    getLogger().warn({ err: e, conversationId }, "fact fetch after fusion failed (fail-open)");
+    getLogger().warn(
+      { err: e, conversationId },
+      "fact fetch after fusion failed (fail-open)",
+    );
     return [];
   }
   const byId = new Map(rows.map((r) => [r.id, r]));
 
   try {
     const rel = await prisma.factRelation.findMany({
-      where: { OR: [{ sourceFactId: { in: top } }, { targetFactId: { in: top } }] },
+      where: {
+        OR: [{ sourceFactId: { in: top } }, { targetFactId: { in: top } }],
+      },
       select: { sourceFactId: true, targetFactId: true },
     });
     const ranked = new Set(top);
@@ -148,29 +203,44 @@ export async function searchActiveFactsWithRelations(
     }
     if (neighborIds.length > 0) {
       const nb = await prisma.extractedFact.findMany({
-        where: { id: { in: neighborIds }, status: "active" },
+        where: { ...permitted, id: { in: neighborIds }, status: "active" },
         select: { id: true, subject: true, fact: true },
       });
       for (const n of nb) if (!byId.has(n.id)) byId.set(n.id, n);
     }
   } catch (e) {
-    getLogger().warn({ err: e, conversationId }, "relation expansion failed (top-K only)");
+    getLogger().warn(
+      { err: e, conversationId },
+      "relation expansion failed (top-K only)",
+    );
   }
 
   const vecSet = new Set(vectorIds);
   const lexSet = new Set(lexicalIds);
   const out: FactHit[] = [];
   const seen = new Set<string>();
-  const push = (f: { id: string; subject: string; fact: string }, fromRelation: boolean) => {
+  const push = (
+    f: { id: string; subject: string; fact: string },
+    fromRelation: boolean,
+  ) => {
     if (out.length === FACT_INJECT_CAP || seen.has(f.id)) return;
     seen.add(f.id);
     const sources: string[] = [];
     if (vecSet.has(f.id)) sources.push("vector");
     if (lexSet.has(f.id)) sources.push("lexical");
     if (fromRelation) sources.push("relation");
-    out.push({ id: f.id, subject: f.subject, fact: f.fact, similarity: 0, sources });
+    out.push({
+      id: f.id,
+      subject: f.subject,
+      fact: f.fact,
+      similarity: 0,
+      sources,
+    });
   };
-  for (const f of rows) push(f, false);
+  for (const id of top) {
+    const f = byId.get(id);
+    if (f) push(f, false);
+  }
   const ranked = new Set(rows.map((r) => r.id));
   for (const f of byId.values()) if (!ranked.has(f.id)) push(f, true);
   return out;

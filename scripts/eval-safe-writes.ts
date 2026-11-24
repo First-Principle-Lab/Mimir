@@ -691,6 +691,10 @@ try {
           arguments: c.arguments,
         })),
         externalCalls: myCalls(),
+        toolCalls: await prisma.agentStep.findMany({
+          where: { run: { conversationId: c.id }, kind: "tool_execution_start" },
+          select: { data: true },
+        }),
         deliveries: await prisma.delivery.findMany({
           where: { conversationId: c.id },
           select: { urgency: true, status: true, availableAt: true },
@@ -716,7 +720,8 @@ try {
           select: { urgency: true, status: true, availableAt: true },
         }),
         steps: await prisma.agentStep.findMany({
-          where: { run: { conversationId: c.id }, kind: "tool_execution_end" },
+          where: { run: { conversationId: c.id } },
+          orderBy: { createdAt: "asc" },
           select: { data: true },
         }),
       };

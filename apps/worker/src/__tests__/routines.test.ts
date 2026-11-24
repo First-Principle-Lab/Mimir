@@ -4,7 +4,8 @@ import { Queue } from "bullmq";
 process.env.DATABASE_URL = "postgres://mimir:mimir@localhost:5434/mimir";
 process.env.REDIS_URL = "redis://localhost:6380";
 process.env.JWT_SECRET = "routine-tests";
-const { getPrismaClient } = await import("@mimir/backend-core");
+const { getPrismaClient, postInbox } = await import("@mimir/backend-core");
+const { inputText } = await import("../harness/inbox.js");
 const { runRoutine, syncRoutine, channelReadTool, scheduleTool } =
   await import("../routines/routines.js");
 const prisma = getPrismaClient();
@@ -33,6 +34,48 @@ afterAll(async () => {
   await prisma.message.deleteMany({ where: { conversationId } });
   await prisma.conversation.delete({ where: { id: conversationId } });
   await prisma.user.delete({ where: { id: userId } });
+});
+test("routine wake references preserve exact keys and remain bound to the inbox", async () => {
+  const routine = await prisma.routine.create({
+    data: {
+      conversationId,
+      userId,
+      instruction: "Prepare the requested draft",
+      source: "schedule",
+      query: {},
+      timing: { type: "once", at: new Date().toISOString() },
+    },
+  });
+  const key = 'due. {"key":"different"}\nnext';
+  await prisma.routineObservation.create({
+    data: { routineId: routine.id, key, data: { due: true } },
+  });
+  const inputId = await postInbox({
+    userId,
+    conversationId,
+    source: "routine:schedule",
+    dedupeKey: "exact-reference",
+    payload: {
+      kind: "routine_fire",
+      routineId: routine.id,
+      key,
+      instruction: routine.instruction,
+    },
+  });
+  const input = await prisma.inboxInput.findUniqueOrThrow({
+    where: { id: inputId },
+  });
+  const args = JSON.parse(inputText([input]).split("\n")[1]!);
+  expect(args).toEqual({ routineId: routine.id, key });
+  const read = channelReadTool({ userId, conversationId, inputs: [input] });
+  expect(await read.execute(args, { userId, conversationId })).toEqual({
+    data: { due: true },
+  });
+  await expect(
+    read.execute({ ...args, key: key + "." }, { userId, conversationId }),
+  ).rejects.toThrow("not in the current inbox");
+  await prisma.inboxInput.delete({ where: { id: inputId } });
+  await prisma.routine.delete({ where: { id: routine.id } });
 });
 test("watcher pre-wake gate, immutable reads and duplicate suppression survive repeat jobs", async () => {
   const routine = await prisma.routine.create({

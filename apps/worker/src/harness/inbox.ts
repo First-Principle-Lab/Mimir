@@ -36,7 +36,7 @@ export function inputText(inputs: Input[]): string {
           );
         case "event":
         case "routine_fire":
-          return `Routine ${p.routineId}; occurrence ${p.key}. User's saved instruction: ${p.instruction}\nUse channel_read to inspect this occurrence before deciding whether to notify. Nothing new or relevant means NO_REPLY.`;
+          return `Routine wake. Read this exact observation with channel_read:\n${JSON.stringify({ routineId: p.routineId, key: p.key })}\nUser's saved instruction: ${p.instruction}\nNothing new or relevant means NO_REPLY.`;
         case "approval_answer":
           return "An approval decision arrived. The runtime validates the card and executes its exact stored action before continuing.";
       }

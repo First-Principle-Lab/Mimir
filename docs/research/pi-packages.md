@@ -58,7 +58,7 @@ routines) stay on BullMQ either way, because in-process children die with the pr
 | `@alphacoder-v0/pi-loops` 0.24.2        | MIT     | Loops that wake with their previous notes, run in a clean-context subagent, file findings to an inbox, and optionally pass a second adversarial "verify" subagent before reaching the user.                                                                                                     | Post-harness routines (§5); "nothing to report" handling |
 | `pi-schedule-prompt` 0.5.1              | MIT     | The `schedule_prompt` tool contract: recurring (cron/interval), one-shot, idle jobs; optional per-job model in a separate session. Its timers are in-process, so re-implement on BullMQ.                                                                                                        | Phase 2 `schedule` tool                                  |
 | `@gotgenes/pi-permission-system` 42.2.0 | MIT     | Allow / ask / deny gates over tools, MCP servers and skills; hides disallowed tools before the run. Config is a single file and the package has 267 releases (heavy churn), so port the model instead of depending on it.                                                                       | Phase 3 policy gate                                      |
-| `pi-hermes-memory` 0.11.0               | MIT     | Secret scanning before a memory write; search over past sessions; background learning every N turns; procedural "how I solved it" notes.                                                                                                                                                        | Phase 5 memory                                           |
+| `pi-hermes-memory` 0.11.0               | MIT     | Secret scanning before a memory write; search over past sessions; background learning every N turns; procedural "how I solved it" notes.                                                                                                                                                        | Phase 5 integration safeguards; no engine port            |
 | `pi-observational-memory` 3.1.4         | MIT     | Cache-friendly tiered compaction with observations and reflections. Compare against pi's built-in compaction first.                                                                                                                                                                             | Phase 5 compaction                                       |
 | `@trevonistrevon/pi-loop` 0.8.2         | MIT     | Loop/monitor/workflow vocabulary. Its own docs say wakes are memory-only and it runs only while pi is active — not durable, so reference only.                                                                                                                                                  | Phase 4                                                  |
 | `@onkernel/browser-loop` 0.12.1         | MIT     | Framework-neutral browser tool catalog with a `pi-agent-core` binding, running on Kernel browsers. Option to replace Browserbase, or port the catalog onto Browserbase.                                                                                                                         | Phase 3 browser tool                                     |
@@ -87,8 +87,20 @@ routines) stay on BullMQ either way, because in-process children die with the pr
    malicious skills in 2026.
 3. **Load only from an explicit list** in Mimir's `ResourceLoader`. Never discover extensions, skills or
    settings from `~/.pi` or project directories in the server.
-4. **Anything that touches credentials, approvals or memory writes is ported, not depended on.**
+4. **Keep credential handling, approvals and memory authorization in Mimir.** Port those policy
+   boundaries rather than delegating them to a pi extension. Memory engines/SDKs may be adopted
+   behind Mimir's adapter after the Phase 7 comparison; do not port a new memory engine.
 5. **Record each decision** (adopt / port / skip, with the reason) in this file.
+
+## Memory direction (2026-11-23)
+
+The active plan now calls for adopting an existing memory system after comparing
+Mem0, Letta, Cognee, Supermemory and Graphiti. Phase 5 prepares context and
+integration contracts; trials and the comparison report happen in Phase 7 after
+staging readiness. Memory-related ideas in the port survey are references for
+integration requirements, secret filtering and compaction, not a commitment to
+build a custom memory engine. No candidate or memory package is selected yet.
+See [the evaluation protocol](../memory-evaluation-plan.md).
 
 ## Phase 1 decisions (2026-11-22)
 
@@ -114,3 +126,10 @@ routines) stay on BullMQ either way, because in-process children die with the pr
 
 - **Port, do not install: `@tintinweb/pi-subagents` 0.26.2** (selected in Phase 1). Ported its in-process child contract: each delegation is a fresh `createAgentSession()` through the same pinned pi 1.6.0 runtime, explicit resource loader and inline extension, with a narrowed tool list and the parent's abort signal. Mimir owns the rest: `AgentRun` rows with parent/root/depth, BullMQ jobs for background agents, runtime-set result status, inbox delivery, budgets and cascade cancel in Postgres. Its settings/agent-file/MCP discovery and filesystem sessions are not used. No dependency was added or upgraded.
 - `pi-durable` remains unadopted: background agents need Postgres ownership, per-user limits and Mimir's inbox, which it does not provide. Revisit only if pi-durable gains a pluggable store.
+
+## Phase 5 decisions (2026-11-23)
+
+- Reuse the pinned pi **1.6.0** compaction, session projection and context-edit APIs. Read `dist/core/compaction/compaction.js`, the session manager and `AgentSession` compaction/prompt paths. Native checkpoints retain the raw journal; append-only context edits clear older tool results. A pre-prompt projection check also covers zero-usage legacy history and Mimir's smaller configured context window.
+- Use the exported native `compact()` with the original physical model, runtime auth and stable routing session ID. Summarization with an artificially small model window can collapse the output budget; extension exceptions can trigger fallback behavior, so a failed custom hook explicitly cancels compaction. Summarization usage is included in Mimir's run budgets and logs.
+- The pinned manual `AgentSession.compact()` throws `Nothing to compact (session too small)` or `Already compacted` when its retained-tail preparation has no eligible history. Treat only these known refusals as a no-op in the projection check; unexpected summary/provider failures still propagate. Runtime-tail construction awaits fresh approval and agent status on every model call, including calls after a tool changes a card.
+- Do not install `pi-observational-memory` or port a replacement extraction engine. Mimir owns output references, scoped provider contracts, migration inputs, credential filtering and measurement; external backend trials remain Phase 7. No dependency version, discovery setting or ResourceLoader allowlist changed.

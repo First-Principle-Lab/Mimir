@@ -426,3 +426,43 @@ describe("deleteFact — soft delete, separate path from supersede", () => {
     await deleteFact("no-such-fact-id", "manual_correction"); // must not throw
   });
 });
+
+test("credential messages are filtered before the extraction model", async () => {
+  const from = new Date();
+  const to = new Date(from.getTime() + 60_000);
+  await addMessages(["api_key=synthetic-canary-0123456789"], from, to);
+  let calls = 0;
+  const res = await extractFacts(conversationId, from, to, {
+    caller: async () => { calls++; return chat('{"facts":[]}'); }, embed,
+  });
+  expect(calls).toBe(0);
+  expect(res.inserted).toBe(0);
+});
+
+test("credential-shaped extracted facts never reach memory or embeddings", async () => {
+  await clearFacts();
+  const from = new Date(),
+    to = new Date(Date.now() + 60000);
+  await addMessages(
+    ["A synthetic credential was accidentally pasted."],
+    from,
+    to,
+  );
+  mock.extract = () =>
+    JSON.stringify({
+      facts: [
+        { subject: "credential", fact: "api_key=synthetic-canary-0123456789" },
+      ],
+    });
+  let embedded = false;
+  const result = await extractFacts(conversationId, from, to, {
+    caller: fakeCaller,
+    embed: async () => {
+      embedded = true;
+      return FIXED_VEC;
+    },
+  });
+  expect(result.inserted).toBe(0);
+  expect(embedded).toBe(false);
+  expect(await listAll()).toHaveLength(0);
+});

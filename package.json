@@ -16,7 +16,8 @@
     "eval-query": "bun scripts/eval-query.ts",
     "eval-harness": "bun scripts/eval-harness.ts && bun scripts/eval-inbox.ts && bun scripts/eval-safe-writes.ts && bun scripts/eval-agents.ts && bun apps/worker/src/redteam.ts",
     "eval-locomo": "bun scripts/eval-locomo.ts",
-    "tune-retrieval": "bun scripts/tune-retrieval.ts"
+    "tune-retrieval": "bun scripts/tune-retrieval.ts",
+    "eval-memory": "bun scripts/eval-memory.ts"
   },
   "devDependencies": {
     "@composio/core": "^0.14.1",

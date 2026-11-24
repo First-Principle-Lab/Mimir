@@ -31,6 +31,9 @@ type Ctx = {
 
 const prisma = getPrismaClient();
 const faux = registerFauxProvider({ provider: "mimir-faux" });
+let testModelOverride: NonNullable<
+  Parameters<typeof setModelOverrideForTests>[0]
+>;
 const userId = `harness-turn-${randomUUID()}`;
 const conversationId = randomUUID();
 
@@ -94,10 +97,11 @@ beforeAll(async () => {
       baseUrl: m.baseUrl,
     })),
   } as Parameters<typeof mr.registerProvider>[1]);
-  setModelOverrideForTests({
+  testModelOverride = {
     modelRuntime: mr,
     model: mr.getModel(fm.provider, fm.id)!,
-  });
+  };
+  setModelOverrideForTests(testModelOverride);
 
   await prisma.user.create({
     data: {
@@ -321,16 +325,16 @@ describe("runTurn", () => {
     ).toBeGreaterThan(0);
 
     // The model saw the static persona (pi sends it as system-message sections)
-    // plus the runtime context right before the message.
+    // plus the volatile runtime tail after the recent messages.
     const system = seen[0]!.messages[0]!;
     expect(system.role).toBe("system");
     expect(system.sections?.preamble).toContain("You are Mimir");
     const texts = seen[0]!.messages
       .filter((m) => m.role === "user")
       .map(textOf);
-    expect(texts.at(-2)).toContain("<runtime_context>");
-    expect(texts.at(-2)).toContain("Asia/Kolkata");
-    expect(texts.at(-1)).toBe("hi, my favourite colour is teal");
+    expect(texts.at(-1)).toContain("<runtime_context>");
+    expect(texts.at(-1)).toContain("Asia/Kolkata");
+    expect(texts.at(-2)).toBe("hi, my favourite colour is teal");
     expect(seen[0]!.messages.map(textOf).join("\n")).toContain(
       "My old project is Cedar.",
     );
@@ -1004,6 +1008,183 @@ describe("Phase Two inbox and response rules", () => {
       expect(calls).toBe(1);
       await prisma.actionAttempt.deleteMany({ where: { runId: run.id } });
     }));
+
+  test("the runtime tail refreshes withdrawn and new cards between model calls", async () =>
+    isolated(async (id) => {
+      const post: import("../harness/tools.js").ToolSpec = {
+        name: "reviewed_issue",
+        label: "Create issue",
+        description: "Synthetic reviewed action",
+        parameters: { type: "object", properties: {} },
+        risk: "communicate_external",
+        sideEffect: "irreversible",
+        idempotent: false,
+        provenance: "test:tail-refresh",
+        resultTrust: "untrusted",
+        outputMaxChars: 1000,
+        execute: async () => ({ created: true }),
+      };
+      const options = { readTools: async () => [post] };
+      const a = await input(id, "Create the reviewed issue");
+      faux.setResponses([
+        reply([fauxToolCall("reviewed_issue", {})], { stopReason: "toolUse" }),
+        reply([fauxText("Review the card.")]),
+      ]);
+      await runTurn(
+        { conversationId: id, userId, messageId: a.message.id },
+        options,
+      );
+      const old = await prisma.actionApproval.findFirstOrThrow({
+        where: { run: { conversationId: id } },
+      });
+      const b = await input(id, "Withdraw that card and prepare a replacement");
+      const start = seen.length;
+      faux.setResponses([
+        reply([fauxToolCall("cancel_approval", { approval_id: old.id })], {
+          stopReason: "toolUse",
+        }),
+        reply([fauxToolCall("reviewed_issue", {})], { stopReason: "toolUse" }),
+        reply([fauxText("Review the replacement card.")]),
+      ]);
+      await runTurn(
+        { conversationId: id, userId, messageId: b.message.id },
+        options,
+      );
+      const pending = await prisma.actionApproval.findFirstOrThrow({
+        where: { run: { conversationId: id }, status: "pending" },
+      });
+      const tails = seen
+        .slice(start)
+        .map((c) =>
+          c.messages.filter((m) => textOf(m).includes("<runtime_context>")),
+        )
+        .map((messages) => JSON.stringify(messages));
+      expect(tails).toHaveLength(3);
+      expect(tails[0]).toContain(old.id);
+      expect(tails[1]).not.toContain(old.id);
+      expect(tails[1]).not.toContain(pending.id);
+      expect(tails[2]).not.toContain(old.id);
+      expect(tails[2]).toContain(pending.id);
+      expect(
+        (await prisma.actionApproval.findUniqueOrThrow({
+          where: { id: old.id },
+        })).status,
+      ).toBe("canceled");
+    }));
+
+  test("a rejected approval blocks unrelated writes, clears the open-card tail and accepts a fresh user request", async () =>
+    isolated(async (id) => {
+      const { ProviderError } = await import("@mimir/connection-provider");
+      let drafts = 0;
+      const post: import("../harness/tools.js").ToolSpec = {
+        name: "rejected_post",
+        label: "Post issue",
+        description: "Synthetic rejected action",
+        parameters: { type: "object", properties: {} },
+        risk: "communicate_external",
+        sideEffect: "irreversible",
+        idempotent: false,
+        provenance: "test:rejection",
+        resultTrust: "untrusted",
+        outputMaxChars: 1000,
+        execute: async () => {
+          throw new ProviderError(
+            "validation_failed",
+            "Provider rejected (422)",
+          );
+        },
+      };
+      const draft: import("../harness/tools.js").ToolSpec = {
+        ...post,
+        name: "local_draft",
+        label: "Local draft",
+        risk: "write_reversible_self",
+        sideEffect: "reversible",
+        idempotent: true,
+        provenance: "mimir:harness/internal",
+        resultTrust: "trusted",
+        execute: async () => {
+          drafts++;
+          return { saved: true };
+        },
+      };
+      const options = { readTools: async () => [post, draft] };
+      try {
+        const a = await input(id, "Create the reviewed issue");
+        faux.setResponses([
+          reply([fauxToolCall("rejected_post", {})], { stopReason: "toolUse" }),
+          reply([fauxText("Review the card.")]),
+        ]);
+        await runTurn(
+          { conversationId: id, userId, messageId: a.message.id },
+          options,
+        );
+        const card = await prisma.actionApproval.findFirstOrThrow({
+          where: { run: { conversationId: id } },
+        });
+        await prisma.actionApproval.update({
+          where: { id: card.id },
+          data: { status: "approved" },
+        });
+        const decision = await prisma.inboxInput.create({
+          data: {
+            conversationId: id,
+            kind: "approval_answer",
+            source: "user:approval-card",
+            dedupeKey: card.id,
+            payload: {
+              kind: "approval_answer",
+              approvalId: card.id,
+              approved: true,
+            },
+          },
+        });
+        faux.setResponses([
+          reply([fauxToolCall("local_draft", {})], { stopReason: "toolUse" }),
+          reply([
+            fauxText("The provider rejected the action; nothing was created."),
+          ]),
+        ]);
+        await runTurn(
+          { conversationId: id, userId, inputId: decision.id },
+          options,
+        );
+        expect(drafts).toBe(0);
+        expect(
+          await prisma.actionAttempt.count({ where: { runId: card.runId } }),
+        ).toBe(1);
+        expect(
+          (
+            await prisma.actionApproval.findUniqueOrThrow({
+              where: { id: card.id },
+            })
+          ).status,
+        ).toBe("failed");
+        const tail = seen
+          .at(-1)!
+          .messages.filter((m) => textOf(m).includes("<runtime_context>"));
+        expect(tail.length).toBeGreaterThan(0);
+        expect(JSON.stringify(tail)).not.toContain(card.id);
+        const fresh = await input(id, "Save a local draft now");
+        faux.setResponses([
+          reply([fauxToolCall("local_draft", {})], { stopReason: "toolUse" }),
+          reply([fauxText("Saved.")]),
+        ]);
+        await runTurn(
+          { conversationId: id, userId, messageId: fresh.message.id },
+          options,
+        );
+        expect(drafts).toBe(1);
+      } finally {
+        const runs = await prisma.agentRun.findMany({
+          where: { conversationId: id },
+          select: { id: true },
+        });
+        await prisma.actionAttempt.deleteMany({
+          where: { runId: { in: runs.map((r) => r.id) } },
+        });
+      }
+    }));
 });
 
 describe("repliesByInput", () => {
@@ -1034,4 +1215,180 @@ describe("repliesByInput", () => {
     expect(repliesByInput([user("a"), assistant("")], 0, 1)).toEqual([""]);
     expect(repliesByInput([], 0, 2)).toEqual(["", ""]);
   });
+});
+
+test.each([
+  { boundary: "whole turn", repeats: 100, split: false },
+  { boundary: "split turn", repeats: 60, split: true },
+])(
+  "runTurn delivers and journals its answer after pre-prompt compaction ($boundary)",
+  async ({ repeats, split }) => {
+    // Pin a common provider window for the local and committed configurations.
+    // pi makes a second summary call when its retained tail splits a turn.
+    const c = await prisma.conversation.create({ data: { userId } });
+    setModelOverrideForTests({
+      ...testModelOverride,
+      model: { ...testModelOverride.model, contextWindow: 10048 },
+    });
+    try {
+      await prisma.message.createMany({
+        data: Array.from({ length: 48 }, (_, i) => ({
+          conversationId: c.id,
+          role: i % 2 ? "assistant" : "user",
+          content: "Transient exercise with no durable user details. ".repeat(
+            repeats,
+          ),
+          createdAt: new Date(Date.now() - (50 - i) * 1000),
+        })),
+      });
+      const message = await prisma.message.create({
+        data: {
+          conversationId: c.id,
+          role: "user",
+          content: "What is 17 + 25?",
+        },
+      });
+      faux.setResponses([
+        reply([
+          fauxText(
+            "Previous exercises are transient. Answer the current arithmetic question.",
+          ),
+        ]),
+        ...(split
+          ? [reply([fauxText("The current exercise is transient too.")])]
+          : []),
+        reply([fauxText("42")]),
+      ]);
+      await runTurn(
+        { userId, conversationId: c.id, messageId: message.id },
+        { readTools: async () => [] },
+      );
+      const run = await prisma.agentRun.findFirstOrThrow({
+        where: { inputMessageId: message.id },
+      });
+      expect(run.status).toBe("succeeded");
+      expect((await replyTo(message.id)).map((m) => m.content)).toEqual(["42"]);
+      const checkpoints = await prisma.sessionEntry.findMany({
+        where: { conversationId: c.id, type: "compaction" },
+      });
+      expect(checkpoints).toHaveLength(1);
+      const checkpoint = JSON.stringify(checkpoints[0]!.data);
+      expect(checkpoint).toContain("Previous exercises are transient.");
+      expect(checkpoint.includes("The current exercise is transient too.")).toBe(
+        split,
+      );
+      expect(
+        await prisma.agentStep.count({
+          where: { runId: run.id, kind: "message_end" },
+        }),
+      ).toBeGreaterThan(0);
+    } finally {
+      setModelOverrideForTests(testModelOverride);
+      await prisma.agentRun.deleteMany({ where: { conversationId: c.id } });
+      await prisma.outboxEvent.deleteMany({
+        where: { payload: { path: ["conversationId"], equals: c.id } },
+      });
+      await prisma.message.deleteMany({ where: { conversationId: c.id } });
+      await prisma.conversation.delete({ where: { id: c.id } });
+    }
+  },
+);
+
+test("compaction can exhaust a budget without starting another model call", async () => {
+  let exhausted = false;
+  let calls = 0;
+  faux.setResponses([
+    () => {
+      calls++;
+      return fauxAssistantMessage([
+        fauxText("Summary of transient exercises."),
+      ]);
+    },
+    () => {
+      calls++;
+      return fauxAssistantMessage([fauxText("This call must not run.")]);
+    },
+  ]);
+  const session = await openSession({
+    entries: [],
+    specs: [],
+    ctx: { userId, conversationId },
+    contextWindow: 4096,
+    history: Array.from({ length: 80 }, (_, i) => ({
+      role: i % 2 ? "assistant" : "user",
+      content: "Transient exercise. ".repeat(30),
+      createdAt: new Date(i + 1),
+    })),
+    systemPrompt: "Synthetic budget test",
+    runtimeContext: () => "",
+    onCompactionUsage: () => {
+      exhausted = true;
+    },
+    assertCanPrompt: () => {
+      if (exhausted) throw new Error("budget exhausted");
+    },
+  });
+  try {
+    await expect(session.prompt("Continue the task")).rejects.toThrow(
+      "budget exhausted",
+    );
+    expect(calls).toBe(1);
+  } finally {
+    session.dispose();
+  }
+});
+
+test("zero-usage legacy history compacts through pi and reloads its checkpoint", async () => {
+  const history = Array.from({ length: 80 }, (_, i) => ({
+    role: i % 2 ? "assistant" : "user",
+    content: "Transient example. ".repeat(30),
+    createdAt: new Date(i + 1),
+  }));
+  history[0]!.content = "Preserve exact project code COMET-482.";
+  faux.setResponses([
+    reply([
+      fauxText(
+        "The user needs project code COMET-482. Other exercises are transient.",
+      ),
+    ]),
+    reply([fauxText("COMET-482")]),
+    reply([fauxText("COMET-482")]),
+  ]);
+  let session = await openSession({
+    entries: [],
+    history,
+    specs: [],
+    ctx: { userId, conversationId },
+    contextWindow: 4096,
+    systemPrompt: "Answer using the supplied project details.",
+    runtimeContext: () => "Synthetic runtime tail",
+  });
+  try {
+    await session.prompt("What project code did I give?");
+    await session.waitForIdle();
+    const entries = session.sessionManager.getEntries();
+    expect(entries.filter((e) => e.type === "compaction")).toHaveLength(1);
+    expect(entries.filter((e) => e.type === "message").length).toBeGreaterThan(
+      80,
+    );
+    session.dispose();
+    session = await openSession({
+      entries,
+      specs: [],
+      ctx: { userId, conversationId },
+      contextWindow: 4096,
+      systemPrompt: "Answer using the supplied project details.",
+      runtimeContext: () => "A new runtime tail",
+    });
+    await session.prompt("Repeat that code.");
+    await session.waitForIdle();
+    expect(JSON.stringify(session.messages)).toContain("COMET-482");
+    expect(
+      session.sessionManager
+        .getEntries()
+        .filter((e) => e.type === "compaction"),
+    ).toHaveLength(1);
+  } finally {
+    session.dispose();
+  }
 });

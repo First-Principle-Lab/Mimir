@@ -84,7 +84,7 @@ describe("buildRuntimeContext", () => {
       facts: [{ subject: "manager", fact: "Priya is the user's manager" }],
     });
     expect(ctx).toContain(
-      "Remembered facts (may be outdated):\n- manager: Priya is the user's manager",
+      'Remembered facts (may be outdated):\n<untrusted_content source="memory_search">\n- manager: Priya is the user\'s manager',
     );
   });
 });
