@@ -1,0 +1,16 @@
+$ bun scripts/eval-harness.ts && bun scripts/eval-inbox.ts && bun scripts/eval-safe-writes.ts && bun scripts/eval-agents.ts && bun apps/worker/src/redteam.ts
+4 | 
+5 | function parseConfig(): Config {
+6 |   const result = configSchema.safeParse(process.env);
+7 |   if (!result.success) {
+8 |     const issues = result.error.issues.map((i) => i.path.join("."));
+9 |     throw new Error(`Invalid environment config. Missing or malformed: ${issues.join(", ")}`);
+                  ^
+error: Invalid environment config. Missing or malformed: OTEL_EXPORTER_OTLP_HEADERS
+      at parseConfig (/home/too_geeky/projects/fpl/Mimir/packages/backend-core/src/config/config.ts:9:15)
+      at getConfig (/home/too_geeky/projects/fpl/Mimir/packages/backend-core/src/config/config.ts:15:25)
+      at /home/too_geeky/projects/fpl/Mimir/packages/backend-core/src/observability.ts:19:13
+      at requestImportModule (2:1)
+
+Bun v1.3.11 (Linux x64 baseline)
+error: script "eval-harness" exited with code 1
