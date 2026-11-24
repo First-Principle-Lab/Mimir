@@ -1,0 +1,14 @@
+{
+  "topic": "phase-6-retrieval-regression",
+  "suite": "retrieval",
+  "status": "passed",
+  "exitCode": 0,
+  "testedCommit": "3eefed6828c8555736e9a6192721970c226800f9",
+  "testedRef": "feat/phase-6-hardening",
+  "branch": "eval/2026-11-24-retrieval-phase-6-retrieval-regression",
+  "runId": "20261124T143013Z-retrieval",
+  "startedAt": "2026-11-24T14:30:14Z",
+  "finishedAt": "2026-11-24T14:31:29Z",
+  "runner": "local",
+  "runUrl": null
+}
