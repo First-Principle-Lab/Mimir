@@ -1,0 +1,14 @@
+{
+  "topic": "phase-5-context-memory-completion",
+  "suite": "retrieval",
+  "status": "passed",
+  "exitCode": 0,
+  "testedCommit": "d44565469d3210e536084d334862b52dd8b87524",
+  "testedRef": "feat/phase-5-context-memory",
+  "branch": "eval/2026-11-24-retrieval-phase-5-context-memory-completion",
+  "runId": "20261124T033838Z-retrieval",
+  "startedAt": "2026-11-24T03:38:39Z",
+  "finishedAt": "2026-11-24T03:39:49Z",
+  "runner": "local",
+  "runUrl": null
+}
