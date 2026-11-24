@@ -1,0 +1,14 @@
+{
+  "topic": "phase-6-hardening-completion",
+  "suite": "harness",
+  "status": "passed",
+  "exitCode": 0,
+  "testedCommit": "3eefed6828c8555736e9a6192721970c226800f9",
+  "testedRef": "feat/phase-6-hardening",
+  "branch": "eval/2026-11-24-harness-phase-6-hardening-completion-2",
+  "runId": "20261124T141625Z-harness",
+  "startedAt": "2026-11-24T14:16:26Z",
+  "finishedAt": "2026-11-24T14:25:50Z",
+  "runner": "local",
+  "runUrl": null
+}
