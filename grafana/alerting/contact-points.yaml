@@ -1,0 +1,18 @@
+# Grafana alerting provisioning: where Mimir alerts go.
+# SLACK_WEBHOOK_URL is an incoming-webhook URL; Grafana expands it from its
+# environment (file provisioning) or scripts/grafana-alerts.ts substitutes it.
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: mimir-slack
+    receivers:
+      - uid: mimir-slack
+        type: slack
+        disableResolveMessage: false
+        settings:
+          url: ${SLACK_WEBHOOK_URL}
+          title: '{{ if eq .Status "firing" }}:rotating_light:{{ else }}:white_check_mark:{{ end }} {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+          text: |-
+            {{ range .Alerts }}*{{ .Annotations.summary }}*
+            {{ .Annotations.description }}
+            {{ end }}
