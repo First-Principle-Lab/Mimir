@@ -6,7 +6,7 @@ parts of 10). Phases 14 (production hardening) and 15 (launch readiness) of that
 are folded into Phases 6–7 below. Repo rules for contributors and coding agents are in [AGENTS.md](AGENTS.md).
 The memory decision below supersedes planned custom memory-engine enhancements in the older plan.
 
-Progress as of 2026-11-23: Phase 0 infrastructure is merged into `dev`. Phase 1
+Progress as of 2026-11-24: Phase 0 infrastructure is merged into `dev`. Phase 1
 is implemented and reviewed in PR #3. The review fixes trust-boundary, lock,
 session-opening, model-limit, streaming and DST findings and evaluates actual
 inference through HTTP intake, BullMQ, durable journals and socket delivery.
@@ -23,7 +23,16 @@ squash-merged into `dev` as `6831b62`. Phase 4 adds background agents, in-turn
 delegation, budgets and cascade cancel; its [completion review](docs/phase-4-review.md)
 records 13 resolved findings. A Phase 3 schema defect found afterwards was fixed in
 #7. The integrated gate on `64d4e1d` (Phases 3–4 with #7) passed 268 tests, 38/38 real-inference
-scenarios and 12 red-team checks: `eval/2026-11-23-harness-phase-3-4-completion`. Phases 5–6 have not started.
+scenarios and 12 red-team checks: `eval/2026-11-23-harness-phase-3-4-completion`.
+Phase 3/4 follow-ups #8 and #9 are integrated into `dev` at `9427cd2`.
+Phase 5 is implemented and reviewed on `feat/phase-5-context-memory`; its
+[requirement and completion-gate review](docs/phase-5-review.md) records 21 resolved
+findings, 302 passing tests, 42/42 actual-inference harness scenarios plus 12 red-team
+checks, 6/6 memory answers with live readiness checks, and 3/3 retrieval details.
+The final implementation tested is `d445654`; immutable runs and the audited
+legacy extraction misses are linked in the review. Required PR CI is pending:
+Phase 5 is not marked complete and Phase 6 has not started. The five-provider
+comparison remains Phase 7 after staging readiness.
 Existing chats retain their latest 50 text messages on first pi use and durable
 facts are preserved. Phase 2 adds inbox/notification scenarios, durable reminders
 and read-only watchers to the Phase 0/1 harness runner.
