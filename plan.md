@@ -30,8 +30,11 @@ Phase 5 is implemented and reviewed on `feat/phase-5-context-memory`; its
 findings, 303 passing tests, 42/42 actual-inference harness scenarios plus 12 red-team
 checks, 6/6 memory answers with live readiness checks, and 3/3 retrieval details.
 The final implementation tested is `d445654`; immutable runs and the audited
-legacy extraction misses are linked in the review. Required PR CI is pending:
-Phase 5 is not marked complete and Phase 6 has not started. The five-provider
+legacy extraction misses are linked in the review. Required PR CI passed on `2831c6e`; PR #10 was squash-merged into `dev` as `edbc2e7`.
+Phase 5 is complete. Phase 6 implementation and local hardening review are on
+`feat/phase-6-hardening`; [the whole-phase review](docs/phase-6-review.md) records
+local evidence and the remaining hosted-staging/Slack gate. Phase 6 is not yet
+marked complete, and Phase 7 has not started. The five-provider
 comparison remains Phase 7 after staging readiness.
 Existing chats retain their latest 50 text messages on first pi use and durable
 facts are preserved. Phase 2 adds inbox/notification scenarios, durable reminders

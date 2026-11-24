@@ -1,4 +1,4 @@
-import { getLogger } from "@mimir/backend-core";
+import { getLogger, recordFailure } from "@mimir/backend-core";
 
 // Shared poll loop for the DB-driven relays (4.4 outbox, 6.1.4 webhook): drain
 // unprocessed rows every few seconds. Returns a stop handle.
@@ -9,6 +9,7 @@ export function pollLoop(drain: () => Promise<unknown>, label: string, intervalM
       try {
         await drain();
       } catch (e) {
+        recordFailure(label, "relay_tick");
         getLogger().error({ err: e }, `${label} relay tick failed`);
       }
       await new Promise((resolve) => setTimeout(resolve, intervalMs));

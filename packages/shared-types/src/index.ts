@@ -37,6 +37,8 @@ export interface ChatResult {
   finishReason?: string;
   cachedTokens?: number;
   generationId?: string;
+  // Provider-reported cost in USD (OpenRouter usage accounting), when present.
+  costUsd?: number;
   toolCalls?: { id: string; type: string; function: { name: string; arguments: string } }[];
 }
 

@@ -17,6 +17,7 @@
     "@mimir/zod-schemas": "workspace:*",
     "@opentelemetry/api": "^1.9.1",
     "@sentry/node": "^10.69.0",
+    "@socket.io/redis-adapter": "8.3.0",
     "bullmq": "^6.0.6",
     "express": "^5.2.1",
     "ioredis": "^6.0.0",

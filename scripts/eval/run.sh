@@ -3,7 +3,7 @@
 # The branch is the tested commit plus one commit adding evals/runs/<run-id>/.
 #
 # Usage: scripts/eval/run.sh <suite> "<topic>" [--push]
-#   suite: retrieval | query | locomo | harness | memory
+#   suite: retrieval | query | locomo | harness | memory | hardening
 # Exit code: the suite's own exit code (0 pass, 1 fail, 2 not run), so CI can gate on it.
 set -euo pipefail
 
@@ -11,8 +11,8 @@ suite="${1:-}"
 topic="${2:-}"
 push="${3:-}"
 case "$suite" in
-  retrieval | query | locomo | harness | memory) ;;
-  *) echo "usage: scripts/eval/run.sh <retrieval|query|locomo|harness|memory> \"<topic>\" [--push]" >&2; exit 64 ;;
+  retrieval | query | locomo | harness | memory | hardening) ;;
+  *) echo "usage: scripts/eval/run.sh <retrieval|query|locomo|harness|memory|hardening> \"<topic>\" [--push]" >&2; exit 64 ;;
 esac
 if [ "$suite" = "memory" ] && [ -n "${MEMORY_EVAL_FILTER:-}" ]; then
   echo "published memory evaluations require the full suite; unset MEMORY_EVAL_FILTER" >&2
@@ -65,6 +65,9 @@ CI=true bun run "eval-$suite" 2>&1 | tee "$out/output.log"
 code="${PIPESTATUS[0]}"
 set -e
 finished="$(date -u +%FT%TZ)"
+
+# Reporting failure must remain visible without replacing the suite's exit code.
+bun scripts/eval/report-metrics.ts "$suite" "$code" || echo "warning: eval alert telemetry unavailable" >&2
 
 if [ -d "$rows_dir" ]; then
   for f in "$rows_dir"/*.jsonl; do

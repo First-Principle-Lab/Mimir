@@ -93,6 +93,8 @@ export interface OpenSessionOptions extends MimirExtensionOptions {
   // Recheck cancellation/budgets after pre-prompt compaction, which can itself
   // consume a model call and exhaust the caller's remaining budget.
   assertCanPrompt?: () => void;
+  // Runs before every provider call, including continuation and compaction.
+  beforeModelCall?: () => Promise<void>;
   onCompactionUsage?: (usage: {
     input: number;
     output: number;
@@ -216,7 +218,7 @@ export async function openSession(
                 },
                 cachedTokens: result.usage.cacheRead,
               },
-              costCents: Math.round(result.usage.cost.total * 100),
+              costUsd: result.usage.cost.total,
             });
           if (result.usage) opts.onCompactionUsage?.(result.usage);
           return result;
@@ -244,6 +246,11 @@ export async function openSession(
     noTools: "builtin",
   });
   await session.bindExtensions({ uiContext: opts.uiContext });
+  const stream = session.agent.streamFunction;
+  session.agent.streamFunction = async (...args) => {
+    await opts.beforeModelCall?.();
+    return stream(...args);
+  };
   session.setActiveToolsByName([
     ...opts.specs.filter((s) => !s.deferred).map((s) => s.name),
     "tool_search",

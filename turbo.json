@@ -1,12 +1,29 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
-  "globalEnv": ["DATABASE_URL", "REDIS_URL", "JWT_SECRET", "OPENROUTER_API_KEY", "RENDER_GIT_COMMIT"],
+  "globalEnv": [
+    "DATABASE_URL",
+    "DATABASE_RLS_ROLE",
+    "REDIS_URL",
+    "JWT_SECRET",
+    "OPENROUTER_API_KEY",
+    "RENDER_GIT_COMMIT",
+    "RENDER_INSTANCE_ID",
+    "MIMIR_INSTANCE_ID",
+    "USER_DAILY_BUDGET_USD",
+    "USER_BUDGET_SOFT_RATIO"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": [".next/**", "!.next/cache/**", "!.next/dev/**", "out/**", "dist/**"]
+      "outputs": [
+        ".next/**",
+        "!.next/cache/**",
+        "!.next/dev/**",
+        "out/**",
+        "dist/**"
+      ]
     },
     "typecheck": {
       "dependsOn": ["^build"],

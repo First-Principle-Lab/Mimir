@@ -17,9 +17,14 @@
     "eval-harness": "bun scripts/eval-harness.ts && bun scripts/eval-inbox.ts && bun scripts/eval-safe-writes.ts && bun scripts/eval-agents.ts && bun apps/worker/src/redteam.ts",
     "eval-locomo": "bun scripts/eval-locomo.ts",
     "tune-retrieval": "bun scripts/tune-retrieval.ts",
-    "eval-memory": "bun scripts/eval-memory.ts"
+    "eval-memory": "bun scripts/eval-memory.ts",
+    "eval-hardening": "bun scripts/eval-hardening.ts",
+    "setup-rls": "bun scripts/rls-role.ts",
+    "grafana-alerts": "bun scripts/grafana-alerts.ts"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "1.6.0",
+    "@earendil-works/pi-coding-agent": "1.6.0",
     "@composio/core": "^0.14.1",
     "@types/bun": "^1.3.14",
     "@types/express": "^5.0.6",

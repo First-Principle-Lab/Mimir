@@ -1,4 +1,9 @@
-import { getPrismaClient } from "@mimir/backend-core";
+import {
+  budgetStatus,
+  budgetView,
+  getPrismaClient,
+  recordBudgetRejection,
+} from "@mimir/backend-core";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/auth.js";
@@ -41,6 +46,20 @@ approvalsRouter.post(
       return;
     }
     const value = parsed.data;
+    // Rejecting an action is always allowed. Its follow-up can wait for reset.
+    const budget = await budgetStatus(req.userId!);
+    if (budget.state === "hard" && value.approved) {
+      recordBudgetRejection("approval");
+      res.status(429).json({
+        error: {
+          code: "BUDGET_EXCEEDED",
+          message:
+            "Today's usage limit is reached. Decide after it resets at midnight UTC.",
+        },
+        budget: budgetView(budget),
+      });
+      return;
+    }
     const outcome = await prisma.$transaction(async (tx) => {
       const approval = await tx.actionApproval.findFirst({
         where: { id: String(req.params.id), run: { userId: req.userId! } },
@@ -86,21 +105,19 @@ approvalsRouter.post(
       });
       return 202;
     });
-    res
-      .status(outcome)
-      .json(
-        outcome === 202
-          ? { queued: true }
-          : {
-              error: {
-                message:
-                  outcome === 404
-                    ? "Approval not found"
-                    : outcome === 410
-                      ? "This approval expired; request a new action"
-                      : "This action changed or already has a decision",
-              },
+    res.status(outcome).json(
+      outcome === 202
+        ? { queued: true }
+        : {
+            error: {
+              message:
+                outcome === 404
+                  ? "Approval not found"
+                  : outcome === 410
+                    ? "This approval expired; request a new action"
+                    : "This action changed or already has a decision",
             },
-      );
+          },
+    );
   },
 );

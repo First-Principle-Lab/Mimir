@@ -1,4 +1,4 @@
-import { getLogger, getPrismaClient } from "@mimir/backend-core";
+import { getLogger, getPrismaClient, recordFailure } from "@mimir/backend-core";
 import {
   GMAIL_INTEGRATION,
   GITHUB_INTEGRATION,
@@ -86,6 +86,7 @@ export async function drainRoutineWebhooks(
       });
       count += routines.length;
     } catch (error) {
+      recordFailure("webhooks", "routine_dispatch");
       getLogger().warn(
         { err: error, eventId: event.id },
         "routine webhook dispatch failed; will retry",

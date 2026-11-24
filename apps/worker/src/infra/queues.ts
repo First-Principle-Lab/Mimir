@@ -1,11 +1,22 @@
 import {
+  budgetDay,
   CONVERSATION_TURNS,
   getConfig,
   getLogger,
   getPrismaClient,
+  recordFailure,
+  recordJob,
+  registerGauge,
   runWithContext,
+  withUserScope,
 } from "@mimir/backend-core";
-import { Queue, Worker, type Job, type JobsOptions } from "bullmq";
+import {
+  DelayedError,
+  Queue,
+  Worker,
+  type Job,
+  type JobsOptions,
+} from "bullmq";
 import {
   runStaleFactExtractionSweep,
   runExtractForConversation,
@@ -139,16 +150,30 @@ export async function recoverHarnessWork(): Promise<void> {
     data: { status: "interrupted", finishedAt: new Date() },
   });
   await recoverStaleAgents();
+  const exhausted = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT u.id FROM "User" u
+    LEFT JOIN "UsageRecord" usage ON usage."userId" = u.id AND usage.date = ${budgetDay()}
+    WHERE COALESCE(usage."costUsd", 0) >= COALESCE(u."dailyBudgetUsd", ${cfg.USER_DAILY_BUDGET_USD})
+  `;
   const inputs = await prisma.inboxInput.findMany({
     where: {
       status: { in: ["pending", "running"] },
       createdAt: { lt: new Date(Date.now() - 60_000) },
+      // Filter before LIMIT so paused users cannot occupy the recovery batch
+      // and starve another user's lost wake.
+      OR: [
+        { kind: "user" },
+        { conversation: { userId: { notIn: exhausted.map((u) => u.id) } } },
+      ],
     },
     include: { conversation: { select: { userId: true } } },
     take: 100,
     orderBy: { seq: "asc" },
   });
-  for (const input of inputs)
+  // Background inputs of a user over the hard budget already have one delayed
+  // wake per conversation (see runTurn); waking them every minute would only
+  // defer again. User messages still get their budget notice.
+  for (const input of inputs) {
     await conversationTurns.add(
       "turn",
       {
@@ -161,6 +186,7 @@ export async function recoverHarnessWork(): Promise<void> {
         jobId: `recovery-${input.id}-${Math.floor(Date.now() / 60_000)}`,
       },
     );
+  }
   const routines = await prisma.routine.findMany({
     where: { status: "active" },
     select: { id: true },
@@ -220,10 +246,22 @@ export async function factExtractionProcessor(job: Job): Promise<void> {
 }
 
 export function wireDlq<D, R, N extends string>(worker: Worker<D, R, N>): void {
+  worker.on("error", (err) => {
+    recordFailure("queue", "worker_error");
+    getLogger().error({ err, queue: worker.name }, "worker transport error");
+  });
+  worker.on("stalled", (jobId) => {
+    recordFailure("queue", "stalled");
+    getLogger().warn(
+      { queue: worker.name, jobId },
+      "stalled job will be retried",
+    );
+  });
   worker.on("failed", (job, err) => {
     // Guard against non-terminal 'failed' emissions (if any): only move a job
     // to the DLQ once its retries are actually exhausted.
     if (!job || job.attemptsMade < (job.opts.attempts ?? 1)) return;
+    recordFailure("queue", "dead_letter");
     failedJobs
       .add("failed", {
         queue: worker.name,
@@ -243,6 +281,76 @@ export function wireDlq<D, R, N extends string>(worker: Worker<D, R, N>): void {
       "job exhausted retries, moved to DLQ",
     );
   });
+}
+
+// Every worker job runs through this wrapper: log context, the user's RLS
+// scope when the job names its user, and duration/lag/outcome metrics.
+export function jobProcessor(
+  queueName: string,
+  processor: (job: Job, token?: string) => Promise<unknown>,
+): (job: Job, token?: string) => Promise<unknown> {
+  // Thread jobId through every log line in the job's lifecycle (the api does the
+  // same for requestId). ALS carries it down the async chain.
+  // A job that names its user runs under that user's RLS scope.
+  const withContext = (job: Job, token?: string): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      runWithContext({ jobId: String(job.id), queue: queueName }, () => {
+        const userId = (job.data as { userId?: unknown } | undefined)?.userId;
+        const run = async () => {
+          // Routine and extraction jobs carry an owned resource id instead
+          // of userId. Resolve it in system scope, then restrict their work.
+          if (typeof userId !== "string") {
+            const data = job.data as {
+              routineId?: string;
+              conversationId?: string;
+            };
+            const prisma = getPrismaClient();
+            const owner = data.routineId
+              ? await prisma.routine.findUnique({
+                  where: { id: data.routineId },
+                  select: { userId: true },
+                })
+              : data.conversationId
+                ? await prisma.conversation.findUnique({
+                    where: { id: data.conversationId },
+                    select: { userId: true },
+                  })
+                : null;
+            if (owner)
+              return withUserScope(owner.userId, () => processor(job, token));
+          }
+          return processor(job, token);
+        };
+        (typeof userId === "string" ? withUserScope(userId, run) : run()).then(
+          resolve,
+          reject,
+        );
+      });
+    });
+  const measured = async (job: Job, token?: string): Promise<unknown> => {
+    const startedAt = Date.now();
+    // Lag counts from when the job was due. A job a processor moved back to
+    // delayed (debounce, busy, budget) has no reliable due time, so it is
+    // left out rather than reported as hours late.
+    const moved = (job.delay ?? 0) !== (job.opts.delay ?? 0);
+    const lag = moved
+      ? undefined
+      : Math.max(0, startedAt - job.timestamp - (job.delay ?? 0)) / 1000;
+    try {
+      const result = await withContext(job, token);
+      recordJob(queueName, "completed", (Date.now() - startedAt) / 1000, lag);
+      return result;
+    } catch (error) {
+      recordJob(
+        queueName,
+        error instanceof DelayedError ? "delayed" : "failed",
+        (Date.now() - startedAt) / 1000,
+        lag,
+      );
+      throw error;
+    }
+  };
+  return measured;
 }
 
 export function startWorkers(): Worker[] {
@@ -265,20 +373,70 @@ export function startWorkers(): Worker[] {
 
   const workers: Worker[] = [];
   for (const [queue, processor, workerOpts] of registrations) {
-    // Thread jobId through every log line in the job's lifecycle (the api does the
-    // same for requestId). ALS carries it down the async chain.
-    const withContext = (job: Job, token?: string): Promise<unknown> =>
-      new Promise((resolve, reject) => {
-        runWithContext({ jobId: String(job.id), queue: queue.name }, () => {
-          processor(job, token).then(resolve, reject);
-        });
-      });
-    const worker = new Worker(queue.name, withContext, {
+    const worker = new Worker(queue.name, jobProcessor(queue.name, processor), {
       connection,
       ...workerOpts,
     });
     wireDlq(worker);
     workers.push(worker);
   }
+  registerWorkerGauges(registrations.map(([queue]) => queue));
   return workers;
+}
+
+let gaugesRegistered = false;
+// Backlogs that alerting watches. Every worker instance reports the same
+// shared values; alert rules take max() across instances.
+export function registerWorkerGauges(queues: Queue[]): void {
+  if (gaugesRegistered) return;
+  gaugesRegistered = true;
+  registerGauge(
+    "mimir_queue_jobs",
+    "BullMQ jobs by queue and state",
+    async () => {
+      const rows: Array<[number, { queue: string; state: string }]> = [];
+      for (const queue of [...queues, failedJobs]) {
+        const counts = await queue.getJobCounts(
+          "waiting",
+          "active",
+          "delayed",
+          "failed",
+        );
+        for (const [state, n] of Object.entries(counts))
+          rows.push([n, { queue: queue.name, state }]);
+      }
+      return rows;
+    },
+  );
+  const prisma = getPrismaClient();
+  registerGauge(
+    "mimir_outbox_backlog",
+    "Outbox rows unrelayed for more than 30 seconds",
+    async () => [
+      [
+        await prisma.outboxEvent.count({
+          where: {
+            processedAt: null,
+            createdAt: { lt: new Date(Date.now() - 30_000) },
+          },
+        }),
+        {},
+      ],
+    ],
+  );
+  registerGauge(
+    "mimir_deliveries_overdue",
+    "Deliveries due more than two minutes ago and still unsent",
+    async () => [
+      [
+        await prisma.delivery.count({
+          where: {
+            status: { in: ["pending", "sending"] },
+            availableAt: { lt: new Date(Date.now() - 120_000) },
+          },
+        }),
+        {},
+      ],
+    ],
+  );
 }

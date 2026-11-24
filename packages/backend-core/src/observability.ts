@@ -2,6 +2,8 @@ import * as Sentry from "@sentry/node";
 import { PrismaInstrumentation } from "@prisma/instrumentation";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
+import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-node";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { trace } from "@opentelemetry/api";
@@ -29,16 +31,33 @@ const sdk = new NodeSDK({
   }),
   traceExporter: cfg.OTEL_EXPORTER_OTLP_ENDPOINT
     ? new OTLPTraceExporter({
-        url: tracesUrl(cfg.OTEL_EXPORTER_OTLP_ENDPOINT),
+        url: signalUrl(cfg.OTEL_EXPORTER_OTLP_ENDPOINT, "traces"),
         headers: parseOtlpHeaders(cfg.OTEL_EXPORTER_OTLP_HEADERS),
       })
     : new ConsoleSpanExporter(),
+  // Metrics (metrics.ts) go to the same OTLP endpoint; Grafana alerts on them.
+  // Without an endpoint none are collected (an empty list also stops the SDK
+  // from defaulting to an exporter aimed at localhost).
+  metricReaders: cfg.OTEL_EXPORTER_OTLP_ENDPOINT
+    ? [
+        new PeriodicExportingMetricReader({
+          exporter: new OTLPMetricExporter({
+            url: signalUrl(cfg.OTEL_EXPORTER_OTLP_ENDPOINT, "metrics"),
+            headers: parseOtlpHeaders(cfg.OTEL_EXPORTER_OTLP_HEADERS),
+          }),
+          exportIntervalMillis: 30_000,
+        }),
+      ]
+    : [],
   instrumentations: [new PrismaInstrumentation()],
 });
 sdk.start();
 
 if (cfg.SENTRY_DSN) {
-  Sentry.init({ dsn: cfg.SENTRY_DSN, environment: cfg.NODE_ENV ?? "development" });
+  Sentry.init({
+    dsn: cfg.SENTRY_DSN,
+    environment: cfg.NODE_ENV ?? "development",
+  });
 }
 
 function parseOtlpHeaders(raw: string | undefined): Record<string, string> {
@@ -53,8 +72,14 @@ function parseOtlpHeaders(raw: string | undefined): Record<string, string> {
 }
 
 // The OTLPHTTP exporter takes the passed url verbatim; the OTel env var spec treats
-// OTEL_EXPORTER_OTLP_ENDPOINT as a base URL and appends /v1/traces. Normalize so
+// OTEL_EXPORTER_OTLP_ENDPOINT as a base URL and appends /v1/<signal>. Normalize so
 // Grafana Cloud's documented endpoint (".../otlp") works as-is.
-function tracesUrl(endpoint: string): string {
-  return endpoint.includes("/v1/traces") ? endpoint : `${endpoint.replace(/\/+$/, "")}/v1/traces`;
+export function signalUrl(
+  endpoint: string,
+  signal: "traces" | "metrics",
+): string {
+  const base = endpoint
+    .replace(/\/v1\/(traces|metrics)\/?$/, "")
+    .replace(/\/+$/, "");
+  return `${base}/v1/${signal}`;
 }

@@ -56,3 +56,13 @@ protocol and de-identified workload are in [memory/README.md](memory/README.md).
 It requires local Postgres/Redis and the OpenRouter key. It records measured
 baseline failures without claiming an external provider comparison; the five
 candidate trials remain Phase 7 work.
+
+The `hardening` suite (Phase 6) runs two API processes, the production job wrappers,
+restricted-role RLS and multi-user chat/agent/watcher load, followed by actual model
+inference. It requires local Postgres/Redis and OPENROUTER_API_KEY, exclusively uses
+Redis DB 9 and cleans synthetic data. `HARDENING_SCALE=2` doubles its load. Run it
+sequentially with other database-backed suites. It is available in the manual eval
+workflow; nightly harness/memory/retrieval suites remain unchanged. Immutable runs
+also report `mimir_eval_pass` when an OTLP endpoint is configured; a failed or not-run
+suite reports zero. Hosted staging and actual Slack verification are separately
+required by [the phase gate](../docs/phase-6-review.md).

@@ -31,6 +31,7 @@ export interface MimirExtensionOptions {
   sessionManager?: SessionManager;
   profileContext?: string;
   summarize?: (event: SessionBeforeCompactEvent) => Promise<CompactionResult>;
+  beforeTool?: () => Promise<void>;
 }
 
 // The Mimir harness as one inline pi extension: Mimir's tools, the policy gate,
@@ -100,6 +101,7 @@ export function mimirExtension(
           let onAbort: (() => void) | undefined;
           try {
             signal?.throwIfAborted();
+            await opts.beforeTool?.();
             const aborted = new Promise<never>((_resolve, reject) => {
               onAbort = () => reject(new Error("Tool execution interrupted"));
               if (signal?.aborted) onAbort();

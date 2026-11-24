@@ -1,6 +1,6 @@
 # Phase 5 review — context and memory integration readiness
 
-Status: implementation and requirement review finished; final evidence and CI state below. Phase 6 must wait for the required PR checks. This phase does not select a memory backend. The existing plan reserves the five-provider comparison for Phase 7 after staging readiness.
+Status: complete. Required CI passed on `2831c6e` and [PR #10](https://github.com/First-Principle-Lab/Mimir/pull/10) was squash-merged into `dev` as `edbc2e7`; the PR completion record supersedes the pre-CI snapshot below. This phase does not select a memory backend. The existing plan reserves the five-provider comparison for Phase 7 after staging readiness.
 
 Based on integrated `dev` commit `9427cd2`, including the merged Phase 3/4 completion fixes. Implementation commits and immutable runs are recorded below. This review covers the whole phase, including the preserved planning changes, migration, worker integration, tests and actual inference.
 

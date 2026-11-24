@@ -167,6 +167,8 @@ async function singleCall(
     messages: toWireMessages(messages),
     max_tokens: params.maxTokens,
     temperature: params.temperature,
+    // Returns usage.cost so spend counts toward the user's daily budget.
+    usage: { include: true },
   };
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;
@@ -206,7 +208,7 @@ async function singleCall(
     id?: string;
     model?: string;
     choices?: [{ finish_reason?: string; message?: { content?: string | null; tool_calls?: ToolCall[] } }];
-    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: number; prompt_tokens_details?: { cached_tokens?: number } };
   };
   const message = parsed.choices?.[0]?.message;
   const content = message?.content ?? "";
@@ -232,6 +234,7 @@ async function singleCall(
     finishReason: parsed.choices?.[0]?.finish_reason,
     cachedTokens: usage?.prompt_tokens_details?.cached_tokens,
     generationId: parsed.id,
+    costUsd: typeof usage?.cost === "number" ? usage.cost : undefined,
     toolCalls,
     usage: {
       promptTokens,

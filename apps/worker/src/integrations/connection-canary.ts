@@ -1,4 +1,4 @@
-import { getConfig, getLogger, getPrismaClient } from "@mimir/backend-core";
+import { getConfig, getLogger, getPrismaClient, recordFailure } from "@mimir/backend-core";
 import { gmailProvider } from "@mimir/connection-provider";
 
 // The canary for the Composio Gmail proxy path (see composio-provider's header
@@ -21,6 +21,7 @@ export async function runConnectionCanary(): Promise<void> {
     if (status !== 200) throw new Error(`gmail probe returned ${status}`);
     getLogger().info({ userId }, "connection canary ok");
   } catch (e) {
+    recordFailure("connection", "canary");
     // The loud path: either the connection is genuinely gone (expired/revoked —
     // still worth flagging) or the proxy transport failed, which is the
     // silent-break we're hunting. Sentry picks this up via the error-level logger.

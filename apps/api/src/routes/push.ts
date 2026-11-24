@@ -1,4 +1,4 @@
-import { getConfig, getLogger, getPrismaClient, type InputJsonValue } from "@mimir/backend-core";
+import { getConfig, getLogger, getPrismaClient, recordFailure, type InputJsonValue } from "@mimir/backend-core";
 import { requireAuth } from "../auth/auth.js";
 import type { Request, Response } from "express";
 import { Router } from "express";
@@ -59,6 +59,7 @@ export async function sendPushToSubscriptions(
       );
       delivered += 1;
     } catch (e) {
+      recordFailure("delivery", "push_send");
       const status = (e as { statusCode?: number | string })?.statusCode;
       if (status === 404 || status === 410) {
         getLogger().warn({ userId, endpoint: sub.endpoint }, "dropping expired push subscription");

@@ -4,6 +4,8 @@ import {
   getPrismaClient,
   memoryGateway,
   LegacyMemoryProvider,
+  budgetStatus,
+  recordBudgetRejection,
 } from "@mimir/backend-core";
 import { extractFacts } from "./fact-extraction.js";
 
@@ -30,12 +32,20 @@ export async function runExtractForConversation(
 
   const conv = await prisma.conversation.findUnique({
     where: { id: conversationId },
-    select: { id: true, lastExtractedAt: true },
+    select: { id: true, userId: true, lastExtractedAt: true },
   });
   if (!conv) {
     getLogger().warn(
       { conversationId, trigger },
       "fact extraction: conversation not found",
+    );
+    return null;
+  }
+  if ((await budgetStatus(conv.userId)).state === "hard") {
+    recordBudgetRejection("memory_ingestion");
+    getLogger().warn(
+      { conversationId, trigger },
+      "memory ingestion deferred: daily budget exhausted; watermark retained",
     );
     return null;
   }

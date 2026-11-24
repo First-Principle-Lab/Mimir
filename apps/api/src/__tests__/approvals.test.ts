@@ -196,3 +196,48 @@ test("a new user correction or stop cancels older cards", async () => {
       .status,
   ).toBe(409);
 });
+test("approvals wait while the daily hard budget is spent, but rejection stays available", async () => {
+  const approval = await card();
+  const day = new Date();
+  day.setUTCHours(0, 0, 0, 0);
+  await prisma.user.update({
+    where: { id: userId },
+    data: { dailyBudgetUsd: 0.1 },
+  });
+  await prisma.usageRecord.create({ data: { userId, date: day, costUsd: 1 } });
+  try {
+    const res = await decide(approval.id, {
+      approved: true,
+      argumentHash: approval.argumentHash,
+    });
+    expect(res.status).toBe(429);
+    expect(
+      (
+        await prisma.actionApproval.findUniqueOrThrow({
+          where: { id: approval.id },
+        })
+      ).status,
+    ).toBe("pending");
+    expect(
+      (
+        await decide(approval.id, {
+          approved: false,
+          argumentHash: approval.argumentHash,
+        })
+      ).status,
+    ).toBe(202);
+    expect(
+      (
+        await prisma.actionApproval.findUniqueOrThrow({
+          where: { id: approval.id },
+        })
+      ).status,
+    ).toBe("rejected");
+  } finally {
+    await prisma.usageRecord.deleteMany({ where: { userId } });
+    await prisma.user.update({
+      where: { id: userId },
+      data: { dailyBudgetUsd: null },
+    });
+  }
+});
