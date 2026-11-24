@@ -31,6 +31,9 @@ type Ctx = {
 
 const prisma = getPrismaClient();
 const faux = registerFauxProvider({ provider: "mimir-faux" });
+let testModelOverride: NonNullable<
+  Parameters<typeof setModelOverrideForTests>[0]
+>;
 const userId = `harness-turn-${randomUUID()}`;
 const conversationId = randomUUID();
 
@@ -94,10 +97,11 @@ beforeAll(async () => {
       baseUrl: m.baseUrl,
     })),
   } as Parameters<typeof mr.registerProvider>[1]);
-  setModelOverrideForTests({
+  testModelOverride = {
     modelRuntime: mr,
     model: mr.getModel(fm.provider, fm.id)!,
-  });
+  };
+  setModelOverrideForTests(testModelOverride);
 
   await prisma.user.create({
     data: {
@@ -1213,62 +1217,82 @@ describe("repliesByInput", () => {
   });
 });
 
-test("runTurn delivers and journals its answer after pre-prompt compaction", async () => {
-  const c = await prisma.conversation.create({ data: { userId } });
-  try {
-    await prisma.message.createMany({
-      data: Array.from({ length: 48 }, (_, i) => ({
-        conversationId: c.id,
-        role: i % 2 ? "assistant" : "user",
-        content: "Transient exercise with no durable user details. ".repeat(
-          100,
-        ),
-        createdAt: new Date(Date.now() - (50 - i) * 1000),
-      })),
+test.each([
+  { boundary: "whole turn", repeats: 100, split: false },
+  { boundary: "split turn", repeats: 60, split: true },
+])(
+  "runTurn delivers and journals its answer after pre-prompt compaction ($boundary)",
+  async ({ repeats, split }) => {
+    // Pin a common provider window for the local and committed configurations.
+    // pi makes a second summary call when its retained tail splits a turn.
+    const c = await prisma.conversation.create({ data: { userId } });
+    setModelOverrideForTests({
+      ...testModelOverride,
+      model: { ...testModelOverride.model, contextWindow: 10048 },
     });
-    const message = await prisma.message.create({
-      data: {
-        conversationId: c.id,
-        role: "user",
-        content: "What is 17 + 25?",
-      },
-    });
-    faux.setResponses([
-      reply([
-        fauxText(
-          "Previous exercises are transient. Answer the current arithmetic question.",
-        ),
-      ]),
-      reply([fauxText("42")]),
-    ]);
-    await runTurn(
-      { userId, conversationId: c.id, messageId: message.id },
-      { readTools: async () => [] },
-    );
-    const run = await prisma.agentRun.findFirstOrThrow({
-      where: { inputMessageId: message.id },
-    });
-    expect(run.status).toBe("succeeded");
-    expect((await replyTo(message.id)).map((m) => m.content)).toEqual(["42"]);
-    expect(
-      await prisma.sessionEntry.count({
+    try {
+      await prisma.message.createMany({
+        data: Array.from({ length: 48 }, (_, i) => ({
+          conversationId: c.id,
+          role: i % 2 ? "assistant" : "user",
+          content: "Transient exercise with no durable user details. ".repeat(
+            repeats,
+          ),
+          createdAt: new Date(Date.now() - (50 - i) * 1000),
+        })),
+      });
+      const message = await prisma.message.create({
+        data: {
+          conversationId: c.id,
+          role: "user",
+          content: "What is 17 + 25?",
+        },
+      });
+      faux.setResponses([
+        reply([
+          fauxText(
+            "Previous exercises are transient. Answer the current arithmetic question.",
+          ),
+        ]),
+        ...(split
+          ? [reply([fauxText("The current exercise is transient too.")])]
+          : []),
+        reply([fauxText("42")]),
+      ]);
+      await runTurn(
+        { userId, conversationId: c.id, messageId: message.id },
+        { readTools: async () => [] },
+      );
+      const run = await prisma.agentRun.findFirstOrThrow({
+        where: { inputMessageId: message.id },
+      });
+      expect(run.status).toBe("succeeded");
+      expect((await replyTo(message.id)).map((m) => m.content)).toEqual(["42"]);
+      const checkpoints = await prisma.sessionEntry.findMany({
         where: { conversationId: c.id, type: "compaction" },
-      }),
-    ).toBeGreaterThan(0);
-    expect(
-      await prisma.agentStep.count({
-        where: { runId: run.id, kind: "message_end" },
-      }),
-    ).toBeGreaterThan(0);
-  } finally {
-    await prisma.agentRun.deleteMany({ where: { conversationId: c.id } });
-    await prisma.outboxEvent.deleteMany({
-      where: { payload: { path: ["conversationId"], equals: c.id } },
-    });
-    await prisma.message.deleteMany({ where: { conversationId: c.id } });
-    await prisma.conversation.delete({ where: { id: c.id } });
-  }
-});
+      });
+      expect(checkpoints).toHaveLength(1);
+      const checkpoint = JSON.stringify(checkpoints[0]!.data);
+      expect(checkpoint).toContain("Previous exercises are transient.");
+      expect(checkpoint.includes("The current exercise is transient too.")).toBe(
+        split,
+      );
+      expect(
+        await prisma.agentStep.count({
+          where: { runId: run.id, kind: "message_end" },
+        }),
+      ).toBeGreaterThan(0);
+    } finally {
+      setModelOverrideForTests(testModelOverride);
+      await prisma.agentRun.deleteMany({ where: { conversationId: c.id } });
+      await prisma.outboxEvent.deleteMany({
+        where: { payload: { path: ["conversationId"], equals: c.id } },
+      });
+      await prisma.message.deleteMany({ where: { conversationId: c.id } });
+      await prisma.conversation.delete({ where: { id: c.id } });
+    }
+  },
+);
 
 test("compaction can exhaust a budget without starting another model call", async () => {
   let exhausted = false;

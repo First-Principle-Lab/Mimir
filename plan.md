@@ -26,8 +26,8 @@ records 13 resolved findings. A Phase 3 schema defect found afterwards was fixed
 scenarios and 12 red-team checks: `eval/2026-11-23-harness-phase-3-4-completion`.
 Phase 3/4 follow-ups #8 and #9 are integrated into `dev` at `9427cd2`.
 Phase 5 is implemented and reviewed on `feat/phase-5-context-memory`; its
-[requirement and completion-gate review](docs/phase-5-review.md) records 21 resolved
-findings, 302 passing tests, 42/42 actual-inference harness scenarios plus 12 red-team
+[requirement and completion-gate review](docs/phase-5-review.md) records 22 resolved
+findings, 303 passing tests, 42/42 actual-inference harness scenarios plus 12 red-team
 checks, 6/6 memory answers with live readiness checks, and 3/3 retrieval details.
 The final implementation tested is `d445654`; immutable runs and the audited
 legacy extraction misses are linked in the review. Required PR CI is pending:
