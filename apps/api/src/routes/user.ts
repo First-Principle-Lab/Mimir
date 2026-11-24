@@ -1,4 +1,9 @@
-import { getPrismaClient, notificationPreferences } from "@mimir/backend-core";
+import {
+  budgetStatus,
+  budgetView,
+  getPrismaClient,
+  notificationPreferences,
+} from "@mimir/backend-core";
 import { requireAuth } from "../auth/auth.js";
 import type { Request, Response } from "express";
 import { Router } from "express";
@@ -34,6 +39,12 @@ userRouter.post("/user/notifications", requireAuth, async (req, res) => {
     data: { notificationPreferences: parsed.data },
   });
   res.json(parsed.data);
+});
+
+// Today's model spend against the user's daily budget.
+userRouter.get("/user/usage", requireAuth, async (req, res) => {
+  const userId = (req as Request & { userId?: string }).userId as string;
+  res.json({ budget: budgetView(await budgetStatus(userId)) });
 });
 
 userRouter.post(

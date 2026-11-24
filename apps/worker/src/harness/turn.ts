@@ -4,6 +4,7 @@ import type {
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import {
+  budgetStatus,
   burstReadyAt,
   getLogger,
   getConfig,
@@ -16,6 +17,8 @@ import {
   HARNESS_TURN_TIMEOUT_MS,
   rollDailyUsage,
   memoryGateway,
+  recordBudgetRejection,
+  recordTurn,
   trackEvent,
   trackModelCall,
   type FactHit,
@@ -80,8 +83,14 @@ const sessions = new SessionHost();
 const RENEW_LUA = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("pexpire", KEYS[1], ARGV[2]) else return 0 end`;
 
 const FALLBACK_REPLY = "Sorry, I couldn't get to that one. Mind trying again?";
+// Written without a model call when a user message was accepted just before
+// the daily hard budget was reached.
+const BUDGET_REPLY =
+  "You've reached today's usage limit, so I can't work on this right now. It resets at midnight UTC.";
 const UNAVAILABLE_REPLY =
   "I can't reply right now: my model isn't available. Please try again in a bit.";
+
+class DailyBudgetExceeded extends Error {}
 
 const lockKey = (conversationId: string) => `harness-lock:${conversationId}`;
 
@@ -413,11 +422,23 @@ async function runConversation(
       clearInterval(cancel);
     }
   }
+  let accounting = Promise.resolve<unknown>(undefined);
+  let dailyBudgetExceeded = false;
+  const assertBudget = async () => {
+    await accounting;
+    if ((await budgetStatus(userId)).state === "hard") {
+      dailyBudgetExceeded = true;
+      recordBudgetRejection("interaction");
+      throw new DailyBudgetExceeded("Daily budget exhausted");
+    }
+  };
   let session: AgentSession;
   try {
     session = await sessions.open(conversationId, {
       entries: rows.map((r) => r.data as unknown as SessionEntry),
       history,
+      beforeModelCall: assertBudget,
+      beforeTool: assertBudget,
       onCompactionUsage: (u) => {
         usage.promptTokens += u.input;
         usage.completionTokens += u.output;
@@ -583,32 +604,34 @@ async function runConversation(
         usage.promptTokens += m.usage?.input ?? 0;
         usage.completionTokens += m.usage?.output ?? 0;
         usage.costUsd += m.usage?.cost?.total ?? 0;
-        void trackModelCall({
-          userId,
-          useCase: "interaction",
-          systemPromptHash: createHash("sha256")
-            .update(session.systemPrompt)
-            .digest("hex"),
-          injectedBlocks: [
-            {
-              type: "memory:" + memoryGateway().provider.id,
-              refIds: facts.map((f) => f.id),
+        accounting = accounting.then(() =>
+          trackModelCall({
+            userId,
+            useCase: "interaction",
+            systemPromptHash: createHash("sha256")
+              .update(session.systemPrompt)
+              .digest("hex"),
+            injectedBlocks: [
+              {
+                type: "memory:" + memoryGateway().provider.id,
+                refIds: facts.map((f) => f.id),
+              },
+            ],
+            result: {
+              content: "",
+              model: m.model ?? "unknown",
+              latencyMs: m.durationMs ?? 0,
+              usage: {
+                promptTokens: m.usage?.input ?? 0,
+                completionTokens: m.usage?.output ?? 0,
+                totalTokens: m.usage?.totalTokens ?? 0,
+              },
+              cachedTokens: m.usage?.cacheRead,
+              finishReason: m.stopReason,
             },
-          ],
-          result: {
-            content: "",
-            model: m.model ?? "unknown",
-            latencyMs: m.durationMs ?? 0,
-            usage: {
-              promptTokens: m.usage?.input ?? 0,
-              completionTokens: m.usage?.output ?? 0,
-              totalTokens: m.usage?.totalTokens ?? 0,
-            },
-            cachedTokens: m.usage?.cacheRead,
-            finishReason: m.stopReason,
-          },
-          costCents: Math.round((m.usage?.cost?.total ?? 0) * 100),
-        });
+            costUsd: m.usage?.cost?.total ?? 0,
+          }),
+        );
       }
     } else if (event.type === "tool_execution_end") {
       usage.toolCalls += 1;
@@ -706,8 +729,11 @@ async function runConversation(
   }
   persistNew();
   await persistChain;
+  await accounting;
   await assertOwned();
   if (persistError) throw persistError;
+  if (dailyBudgetExceeded && ambient && !response.sent)
+    throw new DailyBudgetExceeded("Ambient work deferred until budget reset");
 
   const durationMs = Date.now() - startedAt;
 
@@ -734,13 +760,15 @@ async function runConversation(
         runId,
         inputMessageId: data.messageId,
         inputs,
-        content: response.interrupted
-          ? "Stopped." + (uncertainActions ? " " + uncertainReply : "")
-          : failed
-            ? uncertainActions
-              ? uncertainReply
-              : FALLBACK_REPLY
-            : sanitize(finalText),
+        content: dailyBudgetExceeded
+          ? BUDGET_REPLY + (uncertainActions ? " " + uncertainReply : "")
+          : response.interrupted
+            ? "Stopped." + (uncertainActions ? " " + uncertainReply : "")
+            : failed
+              ? uncertainActions
+                ? uncertainReply
+                : FALLBACK_REPLY
+              : sanitize(finalText),
         failed,
         model: usage.model,
         usage,
@@ -750,11 +778,13 @@ async function runConversation(
   await prisma.agentRun.update({
     where: { id: runId },
     data: {
-      status: response.interrupted
-        ? "interrupted"
-        : failed
-          ? "failed"
-          : "succeeded",
+      status: dailyBudgetExceeded
+        ? "budget_exceeded"
+        : response.interrupted
+          ? "interrupted"
+          : failed
+            ? "failed"
+            : "succeeded",
       replyMessageId: replyId,
       model: usage.model,
       finishedAt: new Date(),
@@ -805,6 +835,10 @@ async function runConversation(
     latencyMs: durationMs,
   });
   log.info({ ...usage, durationMs }, "harness run settled");
+  recordTurn(
+    ambient ? "ambient" : "chat",
+    (Date.now() - inputCreatedAt.getTime()) / 1000,
+  );
   for (const input of inputs)
     await publishUserEvent(userId, "turn_settled", {
       conversationId,
@@ -937,6 +971,8 @@ export async function runTurn(
   );
   let activeRunId: string | undefined;
   let activeBatch: Input[] = [];
+  // Set when the hard budget defers this conversation's remaining inputs.
+  let deferUntil: Date | undefined;
   try {
     const inputs: Input[] = [];
     for (const input of await pendingInputs(data.conversationId)) {
@@ -969,6 +1005,18 @@ export async function runTurn(
         ? [approvalInput]
         : inputs;
     const first = batch[0]!;
+    const budget = batch.some(isStop) ? null : await budgetStatus(data.userId);
+    if (budget?.state === "hard" && first.kind !== "user") {
+      // Background results, events and approval answers wait for the next
+      // budget window; nothing is dropped.
+      recordBudgetRejection("turn");
+      log.warn(
+        { kinds: batch.map((i) => i.kind), resumeAt: budget.resetsAt },
+        "turn deferred: daily budget exhausted",
+      );
+      deferUntil = budget.resetsAt;
+      return;
+    }
     let runId: string;
     if (first.kind === "approval_answer") {
       const p = payloadOf(first);
@@ -1001,7 +1049,9 @@ export async function runTurn(
     activeRunId = runId;
     activeBatch = batch;
     await claimInputs(batch, runId);
-    if (batch.some(isStop)) {
+    if (batch.some(isStop) || budget?.state === "hard") {
+      const overBudget = !batch.some(isStop);
+      if (overBudget) recordBudgetRejection("turn");
       await assertOwned();
       await writeReply({
         conversationId: data.conversationId,
@@ -1009,7 +1059,7 @@ export async function runTurn(
         inputMessageId: first.messageId ?? undefined,
         inputs: batch,
         runId,
-        content: "Stopped.",
+        content: overBudget ? BUDGET_REPLY : "Stopped.",
         failed: false,
         usage: {
           promptTokens: 0,
@@ -1022,7 +1072,7 @@ export async function runTurn(
       });
       await prisma.agentRun.update({
         where: { id: runId },
-        data: { status: "interrupted" },
+        data: { status: overBudget ? "budget_exceeded" : "interrupted" },
       });
       for (const input of batch)
         await publishUserEvent(data.userId, "turn_settled", {
@@ -1043,6 +1093,18 @@ export async function runTurn(
   } catch (error) {
     if (error instanceof ConversationBusyError || !activeRunId) throw error;
     await assertOwned();
+    if (error instanceof DailyBudgetExceeded) {
+      deferUntil = (await budgetStatus(data.userId)).resetsAt;
+      await prisma.inboxInput.updateMany({
+        where: { id: { in: activeBatch.map((i) => i.id) }, status: "running" },
+        data: { status: "pending", runId: null },
+      });
+      await prisma.agentRun.update({
+        where: { id: activeRunId },
+        data: { status: "budget_exceeded", finishedAt: new Date() },
+      });
+      return;
+    }
     const outstanding = await prisma.inboxInput.count({
       where: {
         id: { in: activeBatch.map((i) => i.id) },
@@ -1108,7 +1170,14 @@ export async function runTurn(
             conversationId: data.conversationId,
             userId: data.userId,
             inputId: pending.id,
-            wakeId: randomUUID(),
+            // One delayed wake per conversation and budget window; repeated
+            // deferrals reuse its job id instead of piling up jobs.
+            ...(deferUntil
+              ? {
+                  wakeId: `budget-${data.conversationId}-${deferUntil.getTime()}`,
+                  delayUntil: deferUntil.toISOString(),
+                }
+              : { wakeId: randomUUID() }),
           },
         },
       });

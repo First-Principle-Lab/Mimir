@@ -44,6 +44,11 @@ function jobFor(
         q.turns.add("turn", p, {
           ...turnRetryPolicy,
           jobId: `turn-${p.wakeId ?? p.messageId ?? p.inputId}`,
+          // A budget-deferred wake runs when the next window opens.
+          delay:
+            typeof p.delayUntil === "string"
+              ? Math.max(0, Date.parse(p.delayUntil) - Date.now())
+              : undefined,
         });
     case "delivery_ready":
       if (typeof p.userId !== "string") return null;

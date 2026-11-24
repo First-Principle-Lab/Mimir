@@ -203,6 +203,10 @@ export function agentTools(
           costUsd: Number(r.costUsd.toFixed(4)),
           startedAt: r.startedAt.toISOString(),
           finishedAt: r.finishedAt?.toISOString() ?? null,
+          // Set while the user's daily budget has this agent paused.
+          ...(r.status === "queued" && r.resumeAt && r.resumeAt > new Date()
+            ? { pausedUntil: r.resumeAt.toISOString() }
+            : {}),
         }));
       },
     },

@@ -10,6 +10,7 @@ import {
   REFRESH_TOKEN_COOKIE_PATH,
   REFRESH_TOKEN_TTL_SECONDS,
   trackEvent,
+  withUserScope,
 } from "@mimir/backend-core";
 import { credentialsSchema } from "@mimir/zod-schemas";
 import { createHash, randomBytes } from "node:crypto";
@@ -275,7 +276,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return;
   }
   req.userId = userId;
-  next();
+  // Every query for the rest of this request runs under the user's RLS scope.
+  withUserScope(userId, next);
 }
 
 function randomState(): string {

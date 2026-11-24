@@ -114,6 +114,8 @@ export default function ChatPage() {
   const [connectorsOpen, setConnectorsOpen] = useState(false);
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Set when today's model spend passes the soft budget limit.
+  const [budgetNotice, setBudgetNotice] = useState<string | null>(null);
   const [roster, setRoster] = useState<RosterRow[]>([]);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -170,7 +172,9 @@ export default function ChatPage() {
         ((await cards.json()) as { approvals: Approval[] }).approvals,
       );
     const running = await fetch(
-      API + "/agents?conversationId=" + encodeURIComponent(data.conversation.id),
+      API +
+        "/agents?conversationId=" +
+        encodeURIComponent(data.conversation.id),
       { credentials: "include" },
     );
     if (running.ok && sequence === refreshSequenceRef.current)
@@ -212,6 +216,19 @@ export default function ChatPage() {
       setThinking(last?.role === "user");
     }
     setView("chat");
+    const usage = await fetch(`${API}/user/usage`, {
+      credentials: "include",
+    }).catch(() => null);
+    if (usage?.ok && sequence === refreshSequenceRef.current) {
+      const data = (await usage.json()) as { budget: { state: string } };
+      setBudgetNotice(
+        data.budget.state === "soft"
+          ? "You've used most of today's usage limit."
+          : data.budget.state === "hard"
+            ? "Today's usage limit is reached. It resets at midnight UTC."
+            : null,
+      );
+    }
     return true;
   }, [router]);
 
@@ -356,13 +373,24 @@ export default function ChatPage() {
             return;
           }
           if (res.ok) {
+            const accepted = (await res.json().catch(() => null)) as {
+              budget?: { state?: string };
+            } | null;
+            setBudgetNotice(
+              accepted?.budget?.state === "soft"
+                ? "You've used most of today's usage limit."
+                : null,
+            );
             await refreshThread().catch(() => {});
             return;
           }
           const body = (await res.json().catch(() => null)) as {
-            error?: { message?: string };
+            error?: { code?: string; message?: string };
           } | null;
           if (attempt === 0 && res.status >= 500) continue; // retry same idempotency key
+          // A refused message was never stored; drop its optimistic bubble.
+          if (body?.error?.code === "BUDGET_EXCEEDED")
+            setMessages((prev) => prev.filter((m) => m.id !== clientMessageId));
           setError(body?.error?.message ?? "Request failed");
           setThinking(false);
           pendingReplyRef.current = null;
@@ -604,6 +632,10 @@ export default function ChatPage() {
             </div>
             {error ? (
               <p className="pt-2 text-xs text-destructive">{error}</p>
+            ) : budgetNotice ? (
+              <p className="pt-2 text-xs text-muted-foreground">
+                {budgetNotice}
+              </p>
             ) : null}
             <div ref={bottomRef} />
           </div>

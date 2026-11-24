@@ -1,8 +1,11 @@
 import {
   AGENT_ACTIVE_STATUSES,
+  budgetStatus,
+  budgetView,
   cancelAgentRuns,
   getLogger,
   getPrismaClient,
+  recordBudgetRejection,
   trackEvent,
 } from "@mimir/backend-core";
 import { messageSchema } from "@mimir/zod-schemas";
@@ -120,6 +123,25 @@ export function createMessageRouter(
       return;
     }
 
+    // The hard budget refuses new work; stop stays available because it only
+    // cancels. Retries of an accepted message (above) are not new work.
+    const budget = await budgetStatus(userId);
+    if (budget.state === "hard" && !stop) {
+      recordBudgetRejection("message");
+      getLogger().warn(
+        { userId, spentUsd: budget.spentUsd, limitUsd: budget.limitUsd },
+        "message refused: daily budget exhausted",
+      );
+      res.status(429).json({
+        error: {
+          code: "BUDGET_EXCEEDED",
+          message: "Today's usage limit is reached. It resets at midnight UTC.",
+        },
+        budget: budgetView(budget),
+      });
+      return;
+    }
+
     let userMsg: StoredMessage;
     let outboxId: string;
     try {
@@ -214,7 +236,11 @@ export function createMessageRouter(
       conversationId,
       contentLength: content.length,
     });
-    res.status(202).json({ message: toWire(userMsg), status: "queued" });
+    res.status(202).json({
+      message: toWire(userMsg),
+      status: "queued",
+      budget: budgetView(budget),
+    });
   });
 
   // GET /api/v1/conversation — single persistent thread (find-or-create).

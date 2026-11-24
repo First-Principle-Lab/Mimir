@@ -1,0 +1,343 @@
+# Grafana alerting provisioning: Mimir's alert rules, on the Prometheus
+# series exported by packages/backend-core/src/metrics.ts over OTLP.
+# MIMIR_PROMETHEUS_UID is the uid of the Prometheus data source receiving
+# those metrics (Grafana Cloud: grafanacloud-<stack>-prom).
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: mimir
+    folder: Mimir
+    interval: 1m
+    rules:
+      - uid: mimir-api-down
+        title: API instance down
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: ${MIMIR_PROMETHEUS_UID}
+            model:
+              refId: A
+              instant: true
+              expr: 'min by (api_instance) (mimir_health_ok)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+        noDataState: Alerting
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: critical
+          service: mimir
+        annotations:
+          summary: "An API instance reports failed dependencies, or all API health metrics are missing."
+          description: "mimir_health_ok is below 1 for 2 minutes. NoData pages when all series disappear; Render health checks must also monitor individual instances that stop exporting. Check /health and the Postgres/Redis add-ons."
+      - uid: mimir-dead-letter
+        title: Jobs moved to the dead-letter queue
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: ${MIMIR_PROMETHEUS_UID}
+            model:
+              refId: A
+              instant: true
+              expr: 'max(mimir_queue_jobs{queue="failed-agent-jobs",state="waiting"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+        noDataState: OK
+        execErrState: Error
+        for: 0m
+        labels:
+          severity: critical
+          service: mimir
+        annotations:
+          summary: "A worker job exhausted its retries."
+          description: "Inspect failed-agent-jobs in Redis for the queue, job data and error. The job will not run again on its own."
+      - uid: mimir-message-latency
+        title: Message intake p95 above 1s
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: ${MIMIR_PROMETHEUS_UID}
+            model:
+              refId: A
+              instant: true
+              expr: 'histogram_quantile(0.95, sum by (le) (rate(mimir_http_request_duration_seconds_bucket{route="/api/v1/message"}[10m])))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [1] }
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: warning
+          service: mimir
+        annotations:
+          summary: "POST /message is slow to accept messages."
+          description: "Intake only stores and enqueues. Slowness points at Postgres, Redis or the budget lookup."
+      - uid: mimir-http-errors
+        title: API 5xx above 5%
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: ${MIMIR_PROMETHEUS_UID}
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(rate(mimir_http_request_duration_seconds_count{status_class="5xx"}[5m])) / clamp_min(sum(rate(mimir_http_request_duration_seconds_count[5m])), 1e-9)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.05] }
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: critical
+          service: mimir
+        annotations:
+          summary: "More than 5% of API requests fail with a server error."
+          description: "Check Sentry and API logs for the failing route."
+      - uid: mimir-job-lag
+        title: Worker job lag p95 above 60s
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: ${MIMIR_PROMETHEUS_UID}
+            model:
+              refId: A
+              instant: true
+              expr: 'histogram_quantile(0.95, sum by (le, queue) (rate(mimir_job_lag_seconds_bucket[10m])))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [60] }
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: warning
+          service: mimir
+        annotations:
+          summary: "Jobs wait more than a minute before a worker starts them."
+          description: "Workers are saturated or down. Compare mimir_queue_jobs waiting counts; consider more worker instances or concurrency."
+      - uid: mimir-chat-turn-latency
+        title: Chat reply p95 above 2 minutes
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: ${MIMIR_PROMETHEUS_UID}
+            model:
+              refId: A
+              instant: true
+              expr: 'histogram_quantile(0.95, sum by (le) (rate(mimir_turn_duration_seconds_bucket{mode="chat"}[15m])))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [120] }
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        labels:
+          severity: warning
+          service: mimir
+        annotations:
+          summary: "Users wait more than two minutes for chat replies."
+          description: "From the user's message to the settled reply. Check model latency (ModelCallLog), job lag and conversation lock contention."
+      - uid: mimir-outbox-backlog
+        title: Outbox rows not relayed
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: ${MIMIR_PROMETHEUS_UID}
+            model:
+              refId: A
+              instant: true
+              expr: 'max(mimir_outbox_backlog)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: critical
+          service: mimir
+        annotations:
+          summary: "Committed work is not reaching BullMQ."
+          description: "Outbox rows older than 30s are waiting. The worker's relay loop is down or Redis is unreachable."
+      - uid: mimir-deliveries-overdue
+        title: Deliveries overdue
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: ${MIMIR_PROMETHEUS_UID}
+            model:
+              refId: A
+              instant: true
+              expr: 'max(mimir_deliveries_overdue)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          service: mimir
+        annotations:
+          summary: "Replies are due but not being sent."
+          description: "Delivery rows are more than two minutes past due. The API delivery loop is stalled or failing."
+      - uid: mimir-handled-failures
+        title: Handled failures rising
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: ${MIMIR_PROMETHEUS_UID}
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (component) (increase(mimir_failures_total[15m]))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [20] }
+        noDataState: OK
+        execErrState: Error
+        for: 0m
+        labels:
+          severity: warning
+          service: mimir
+        annotations:
+          summary: "A component logged more than 20 handled failures in 15 minutes."
+          description: "The component label names the area (delivery, socket, queue, metrics, ...). Search logs for its error lines."
+      - uid: mimir-budget-hard
+        title: User reached the daily hard budget
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: ${MIMIR_PROMETHEUS_UID}
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(increase(mimir_budget_crossings_total{state="hard"}[1h]))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+        noDataState: OK
+        execErrState: Error
+        for: 0m
+        labels:
+          severity: info
+          service: mimir
+        annotations:
+          summary: "A user reached the daily model budget; chat is refused and background work paused until 00:00 UTC."
+          description: "Expected occasionally. Repeated hits suggest a runaway loop or a limit that needs a per-user override (User.dailyBudgetUsd)."
+      - uid: mimir-ambient-latency
+        title: Ambient turn p95 above 2 minutes
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: ${MIMIR_PROMETHEUS_UID}
+            model:
+              refId: A
+              instant: true
+              expr: 'histogram_quantile(0.95, sum by (le) (rate(mimir_turn_duration_seconds_bucket{mode="ambient"}[15m])))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [120] }
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels: { severity: warning, service: mimir }
+        annotations:
+          summary: "Background observations take more than two minutes to settle."
+          description: "Measured from durable inbox intake to turn settlement. Inspect routine queues, model latency and conversation locks; this excludes time before inbox intake."
+      - uid: mimir-eval-regression
+        title: Evaluation gate failed or did not run
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: ${MIMIR_PROMETHEUS_UID}
+            model:
+              refId: A
+              instant: true
+              expr: 'min by (suite) (last_over_time(mimir_eval_pass[36h]))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+        noDataState: Alerting
+        execErrState: Error
+        for: 5m
+        labels: { severity: warning, service: mimir }
+        annotations:
+          summary: "An evaluation failed, did not run, or all eval telemetry is stale."
+          description: "Inspect the immutable eval branch and GitHub eval workflow. Configure its OTLP secrets; missing inference credentials do not count as a pass."

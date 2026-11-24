@@ -1,6 +1,6 @@
 # Phase 5 review — context and memory integration readiness
 
-Status: implementation and requirement review finished; final evidence and CI state below. Phase 6 must wait for the required PR checks. This phase does not select a memory backend. The existing plan reserves the five-provider comparison for Phase 7 after staging readiness.
+Status: complete. Required CI passed on `2831c6e` and [PR #10](https://github.com/First-Principle-Lab/Mimir/pull/10) was squash-merged into `dev` as `edbc2e7`; the PR completion record supersedes the pre-CI snapshot below. This phase does not select a memory backend. The existing plan reserves the five-provider comparison for Phase 7 after staging readiness.
 
 Based on integrated `dev` commit `9427cd2`, including the merged Phase 3/4 completion fixes. Implementation commits and immutable runs are recorded below. This review covers the whole phase, including the preserved planning changes, migration, worker integration, tests and actual inference.
 
@@ -56,7 +56,7 @@ Final tested implementation: `d445654`. The final harness, memory and retrieval 
 - **Retrieval:** [`eval/2026-11-24-retrieval-phase-5-context-memory-completion`](https://github.com/First-Principle-Lab/Mimir/tree/eval/2026-11-24-retrieval-phase-5-context-memory-completion), tested `d445654`: 3/3 expected details (supersession, exact-term lexical lookup and multi-hop relation retrieval) passed with actual extraction/embedding inference. This narrow retrieval gate complements the interaction-path memory and harness gates.
 - **Local checks:** dependency install with the frozen lockfile; additive migration applied; lint, typecheck, duplication verification and **303 tests** passed (worker 195, backend-core 23, API 47, connection-provider 29, tasks 6, web 3). Strict focused TypeScript checks passed for memory eval, safe-write eval, agent eval and private export scripts. CI-equivalent web build passed. The export CLI smoke check verified 0600 permissions, source IDs, supersession, tombstones and absence of embeddings. A diff scan against eight actual local secret values found no matches, including the final immutable eval branch diffs.
 - **Environment:** Bun 1.4.2 for the original local checks; the CI follow-up also passed all 303 tests on Bun 1.3.11 with the committed model configuration. CI pins 1.3.11. Local pgvector/Postgres and Redis used the standard test ports. Inference configuration is saved with each immutable run. CI and staging are separate checks, not inferred from local success.
-- **PR CI:** pending when this review was prepared. Phase 5 is not marked complete and Phase 6 has not started. All required PR checks must pass before proceeding.
+- **PR CI:** required checks passed on `2831c6e`; PR #10 was squash-merged into `dev` as `edbc2e7`. Phase 5 is complete. Earlier pending-CI notes in the findings describe the historical checks before that final passing run.
 
 Earlier evidence is deliberately retained:
 

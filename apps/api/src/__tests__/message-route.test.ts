@@ -239,3 +239,84 @@ describe("GET /conversation", () => {
     expect(body.conversation.messages[0]!.content).toBe("hello");
   });
 });
+
+describe("daily budget", () => {
+  test("the hard limit refuses new messages with 429 but still accepts stop", async () => {
+    const day = new Date();
+    day.setUTCHours(0, 0, 0, 0);
+    await prisma.user.update({
+      where: { id: userId },
+      data: { dailyBudgetUsd: 0.5 },
+    });
+    const usage = await fetch(`${base}/user/usage`, { headers: { cookie } });
+    expect(
+      ((await usage.json()) as { budget: { state: string } }).budget.state,
+    ).toBe("ok");
+    await prisma.usageRecord.create({
+      data: { userId, date: day, costUsd: 0.5 },
+    });
+    try {
+      const refused = await post({
+        conversationId,
+        content: "one more",
+        clientMessageId: randomUUID(),
+      });
+      expect(refused.status).toBe(429);
+      expect(await refused.json()).toMatchObject({
+        error: { code: "BUDGET_EXCEEDED" },
+        budget: { state: "hard", limitUsd: 0.5, spentUsd: 0.5 },
+      });
+      expect(
+        await prisma.message.count({
+          where: { conversationId, content: "one more" },
+        }),
+      ).toBe(0);
+      const stop = await post({
+        conversationId,
+        content: "stop",
+        clientMessageId: randomUUID(),
+      });
+      expect(stop.status).toBe(202);
+      const view = (await (
+        await fetch(`${base}/user/usage`, { headers: { cookie } })
+      ).json()) as { budget: { state: string; resetsAt: string } };
+      expect(view.budget.state).toBe("hard");
+      expect(new Date(view.budget.resetsAt).getTime()).toBe(
+        day.getTime() + 86_400_000,
+      );
+    } finally {
+      await prisma.usageRecord.deleteMany({ where: { userId } });
+      await prisma.user.update({
+        where: { id: userId },
+        data: { dailyBudgetUsd: null },
+      });
+    }
+  });
+
+  test("the soft limit still accepts messages and reports the state", async () => {
+    const day = new Date();
+    day.setUTCHours(0, 0, 0, 0);
+    await prisma.user.update({
+      where: { id: userId },
+      data: { dailyBudgetUsd: 1 },
+    });
+    await prisma.usageRecord.create({
+      data: { userId, date: day, costUsd: 0.85 },
+    });
+    try {
+      const res = await post({
+        conversationId,
+        content: "near the limit",
+        clientMessageId: randomUUID(),
+      });
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({ budget: { state: "soft" } });
+    } finally {
+      await prisma.usageRecord.deleteMany({ where: { userId } });
+      await prisma.user.update({
+        where: { id: userId },
+        data: { dailyBudgetUsd: null },
+      });
+    }
+  });
+});

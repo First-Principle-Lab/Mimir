@@ -9,14 +9,18 @@ import {
   AGENT_ROOT_MAX_USD,
   AGENT_ACTIVE_STATUSES,
   AGENT_STALE_MS,
+  budgetResetsAt,
+  budgetStatus,
   cancelAgentRuns,
   getConfig,
   getLogger,
   getPrismaClient,
+  recordBudgetRejection,
   trackModelCall,
   workerSystemPrompt,
   type InputJsonValue,
   type Prisma,
+  withUserScope,
 } from "@mimir/backend-core";
 import { ToolError } from "@mimir/tasks";
 import { DelayedError, Queue, type Job } from "bullmq";
@@ -54,7 +58,10 @@ export type AgentStatus =
   | "interrupted"
   | "timeout"
   | "budget_exceeded"
-  | "canceled";
+  | "canceled"
+  // Internal: the user's daily hard budget stopped a background run, which
+  // is requeued for the next window instead of reporting a result.
+  | "paused";
 export const ACTIVE = AGENT_ACTIVE_STATUSES;
 export interface ProposedAction {
   tool: string;
@@ -423,6 +430,11 @@ export async function executeAgent(
         await chain;
         if (!stopped && (await treeCost(run.rootRunId!)) >= AGENT_ROOT_MAX_USD)
           stop("budget_exceeded");
+        if (!stopped && (await budgetStatus(run.userId)).state === "hard") {
+          recordBudgetRejection("agent");
+          // Helpers report to a parent that pauses at its own next tool.
+          stop(run.depth === 1 ? "paused" : "budget_exceeded");
+        }
         if (stopped) throw new ToolError("blocked", "The agent was stopped");
         return spec.execute(args, ctx);
       },
@@ -431,6 +443,14 @@ export async function executeAgent(
   try {
     session = await openSession({
       entries: [],
+      beforeModelCall: async () => {
+        await chain;
+        if (!stopped && (await budgetStatus(run.userId)).state === "hard") {
+          recordBudgetRejection("agent");
+          stop(run.depth === 1 ? "paused" : "budget_exceeded");
+        }
+        if (stopped) throw new Error("Agent stopped: " + stopped);
+      },
       specs: guarded,
       ctx: {
         userId: run.userId,
@@ -520,23 +540,25 @@ export async function executeAgent(
     usage.promptTokens += m.usage?.input ?? 0;
     usage.completionTokens += m.usage?.output ?? 0;
     usage.costUsd += m.usage?.cost?.total ?? 0;
-    void trackModelCall({
-      userId: run.userId,
-      useCase: "subagent",
-      result: {
-        content: "",
-        model: m.model ?? "unknown",
-        latencyMs: m.durationMs ?? 0,
-        usage: {
-          promptTokens: m.usage?.input ?? 0,
-          completionTokens: m.usage?.output ?? 0,
-          totalTokens: m.usage?.totalTokens ?? 0,
+    later(() =>
+      trackModelCall({
+        userId: run.userId,
+        useCase: "subagent",
+        result: {
+          content: "",
+          model: m.model ?? "unknown",
+          latencyMs: m.durationMs ?? 0,
+          usage: {
+            promptTokens: m.usage?.input ?? 0,
+            completionTokens: m.usage?.output ?? 0,
+            totalTokens: m.usage?.totalTokens ?? 0,
+          },
+          cachedTokens: m.usage?.cacheRead,
+          finishReason: m.stopReason,
         },
-        cachedTokens: m.usage?.cacheRead,
-        finishReason: m.stopReason,
-      },
-      costCents: Math.round((m.usage?.cost?.total ?? 0) * 100),
-    });
+        costUsd: m.usage?.cost?.total ?? 0,
+      }),
+    );
     // A final answer is kept even at the limit; only further work stops,
     // before its tools run. The task-wide cap is checked by the tool guard.
     if (
@@ -701,6 +723,22 @@ export async function runAgentJob(
     include: { definition: true },
   });
   if (!run || run.trigger !== "agent" || !ACTIVE.includes(run.status)) return;
+  return withUserScope(run.userId, () =>
+    runClaimedAgent(run, job, token, options),
+  );
+}
+
+async function runClaimedAgent(
+  run: AgentRun,
+  job: Pick<Job<{ runId: string }>, "data" | "moveToDelayed">,
+  token: string | undefined,
+  options: AgentOptions,
+): Promise<void> {
+  if ((await budgetStatus(run.userId)).state === "hard") {
+    recordBudgetRejection("agent");
+    await pauseForBudget(run.id, job, token);
+    return;
+  }
   // Claim a running slot under the per-user lock; otherwise wait a little.
   const started = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${run.userId}))::text`;
@@ -732,17 +770,49 @@ export async function runAgentJob(
     getLogger().error({ err: error, agentRunId: run.id }, "agent job failed");
     outcome = { status: "failed", summary: "", proposedActions: [] };
   }
+  if (outcome.status === "paused") {
+    await pauseForBudget(run.id, job, token);
+    return;
+  }
   await finalizeAgent(run, outcome);
 }
 
+// The user's hard budget is spent: requeue the run and its job for the next
+// UTC day. A retried attempt starts again from the brief, as after a crash;
+// the action journal keeps any started write from repeating.
+async function pauseForBudget(
+  runId: string,
+  job: Pick<Job<{ runId: string }>, "moveToDelayed">,
+  token: string | undefined,
+): Promise<void> {
+  const resumeAt = budgetResetsAt();
+  await prisma.agentRun.updateMany({
+    where: { id: runId, status: { in: ACTIVE } },
+    data: { status: "queued", resumeAt },
+  });
+  getLogger().warn(
+    { agentRunId: runId, resumeAt },
+    "background agent paused: daily budget exhausted",
+  );
+  await job.moveToDelayed(resumeAt.getTime(), token);
+  throw new DelayedError();
+}
+
 // An agent whose job was lost or crashed past its retries still reports back,
-// as interrupted, so the parent always hears from it.
+// as interrupted, so the parent always hears from it. A budget-paused run is
+// measured from when it resumes.
 export async function recoverStaleAgents(now = new Date()): Promise<void> {
   const stale = await prisma.agentRun.findMany({
     where: {
       trigger: "agent",
       status: { in: ACTIVE },
-      startedAt: { lt: new Date(now.getTime() - AGENT_STALE_MS) },
+      OR: [
+        {
+          resumeAt: null,
+          startedAt: { lt: new Date(now.getTime() - AGENT_STALE_MS) },
+        },
+        { resumeAt: { lt: new Date(now.getTime() - AGENT_STALE_MS) } },
+      ],
     },
     take: 50,
   });

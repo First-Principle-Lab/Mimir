@@ -28,6 +28,8 @@ model User {
   googleId     String?  @unique
   timezone     String?
   notificationPreferences Json?
+  // Overrides the deployment's daily model budget for this user (USD).
+  dailyBudgetUsd Float?
   createdAt    DateTime @default(now())
 
   conversations     Conversation[]
@@ -253,6 +255,8 @@ model AgentRun {
   brief            Json?
   result           Json?
   budgetUsd        Float?
+  // Set when the user's hard budget paused this run; it resumes then.
+  resumeAt         DateTime?
   messages         AgentMessage[]
 
   @@unique([inputMessageId])
@@ -531,6 +535,8 @@ model UsageRecord {
   user       User     @relation(fields: [userId], references: [id])
   date       DateTime @db.Date
   tokensUsed Int      @default(0)
+  // Exact model spend for the UTC day; the budget gate reads this.
+  costUsd    Float    @default(0)
 
   @@unique([userId, date])
 }
@@ -560,6 +566,7 @@ model ModelCallLog {
   finishReason   String?  // normalized finish_reason ("stop" | "length" | "content_filter" | "tool_calls" | "error")
   generationId   String?  // OpenRouter's response id — lets you query /api/v1/generation later for provider-level audit detail
   costCents      Int
+  costUsd        Float    @default(0)
   latencyMs      Int
   success        Boolean
   // 10.7 context snapshot: hashes + the structure (message ids, injected block

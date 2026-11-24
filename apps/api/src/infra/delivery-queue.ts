@@ -4,6 +4,8 @@ import {
   getConfig,
   getLogger,
   getPrismaClient,
+  recordDelivery,
+  recordFailure,
   recordNotificationReceipt,
 } from "@mimir/backend-core";
 import { sendPushToSubscriptions } from "../routes/push.js";
@@ -40,7 +42,12 @@ export async function drainDeliveries(
   options: {
     now?: Date;
     userId?: string;
-    emit?: typeof emitToUser;
+    // Live sockets reached cluster-wide (sync emitters are for tests).
+    emit?: (
+      userId: string,
+      event: string,
+      payload: unknown,
+    ) => number | Promise<number>;
     push?: typeof sendPushToSubscriptions;
   } = {},
 ): Promise<number> {
@@ -91,6 +98,9 @@ export async function drainDeliveries(
         where: {
           id: row.id,
           status: { in: ["pending", "sending"] },
+          // A different drain may have sent this row and released its lease
+          // since our initial read. Respect its retry/ACK deadline as well.
+          availableAt: { lte: now },
           OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
         },
         data: {
@@ -121,7 +131,7 @@ export async function drainDeliveries(
         content,
         digest: claimed.length > 1,
       };
-      const sockets = (options.emit ?? emitToUser)(
+      const sockets = await (options.emit ?? emitToUser)(
         first.userId,
         "new_message",
         payload,
@@ -166,7 +176,9 @@ export async function drainDeliveries(
         }
       });
       if (channel !== "none") sent += claimed.length;
+      recordDelivery(channel, claimed.length);
     } catch (error) {
+      recordFailure("delivery", "drain");
       await prisma.delivery.updateMany({
         where: { id: { in: ids }, leaseToken },
         data: {
@@ -191,9 +203,10 @@ export function startDeliveryQueue(): () => void {
     if (busy) return;
     busy = true;
     void drainDeliveries()
-      .catch((error) =>
-        getLogger().error({ err: error }, "delivery queue drain failed"),
-      )
+      .catch((error) => {
+        recordFailure("delivery", "queue_tick");
+        getLogger().error({ err: error }, "delivery queue drain failed");
+      })
       .finally(() => {
         busy = false;
       });

@@ -1,0 +1,16 @@
+# Routes every alert in the Mimir folder to Slack. Provisioning replaces the
+# org's notification policy tree, so use a Grafana org/stack dedicated to Mimir.
+apiVersion: 1
+policies:
+  - orgId: 1
+    receiver: mimir-slack
+    group_by: [grafana_folder, alertname]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    routes:
+      - receiver: mimir-slack
+        object_matchers:
+          - [severity, "=", critical]
+        group_wait: 10s
+        repeat_interval: 1h

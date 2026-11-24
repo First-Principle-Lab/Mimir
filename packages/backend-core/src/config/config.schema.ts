@@ -2,6 +2,9 @@ import { z } from "zod";
 
 export const configSchema = z.object({
   DATABASE_URL: z.string().min(1),
+  // Role each connection switches to so row-level security applies when the
+  // DATABASE_URL user is a superuser or has BYPASSRLS. Unset = connect as is.
+  DATABASE_RLS_ROLE: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1),
   PORT: z.coerce.number().int().positive().default(4000),
   JWT_SECRET: z.string().min(1),
@@ -61,6 +64,10 @@ export const configSchema = z.object({
   // webhook (same webhook + poll pairing as gmail/mail-poll). Default: every
   // minute so a change missed by push is caught within a tick.
   CALENDAR_POLL_CRON: z.string().default("* * * * *"),
+  // Per-user daily model budget (USD). The soft limit warns; the hard limit
+  // refuses new chat and pauses background work until the next UTC day.
+  USER_DAILY_BUDGET_USD: z.coerce.number().positive().default(5),
+  USER_BUDGET_SOFT_RATIO: z.coerce.number().gt(0).lt(1).default(0.8),
   FACT_DARK_LAUNCH: z.coerce.boolean().default(false),
   FACT_SWEEP_CRON: z.string().default("0 * * * *"),
   // Web Push: VAPID keys. Absent => push delivery is disabled and events

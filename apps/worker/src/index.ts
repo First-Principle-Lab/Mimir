@@ -12,9 +12,9 @@ import { startOutboxRelay } from "./infra/outbox-relay.js";
 import { startRoutineWebhooks } from "./routines/webhooks.js";
 
 getConfig();
-startWorkers();
-startOutboxRelay();
-startRoutineWebhooks();
+const workers = startWorkers();
+const stopRelay = startOutboxRelay();
+const stopWebhooks = startRoutineWebhooks();
 void scheduleHarnessRecovery().catch((e) =>
   getLogger().error({ err: e }, "failed to schedule harness recovery"),
 );
@@ -35,3 +35,20 @@ void scheduleFactExtractionSweep().catch((e) =>
 );
 
 getLogger().info({ version }, "@mimir/worker ready");
+
+// Render sends SIGTERM before replacing the worker. Stop taking jobs and let
+// running ones finish; anything still running at the deadline is stalled and
+// retried by another worker (turn and agent journals make retries safe).
+let stopping = false;
+for (const signal of ["SIGTERM", "SIGINT"] as const)
+  process.on(signal, () => {
+    if (stopping) return;
+    stopping = true;
+    getLogger().info({ signal }, "worker shutting down");
+    stopRelay();
+    stopWebhooks();
+    void Promise.all(workers.map((w) => w.close()))
+      .catch((err) => getLogger().error({ err }, "worker shutdown failed"))
+      .finally(() => process.exit(0));
+    setTimeout(() => process.exit(0), 25_000).unref();
+  });
